@@ -1,0 +1,438 @@
+import os
+import random
+import argparse
+from collections import Counter
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+from sklearn.metrics import confusion_matrix, accuracy_score, f1_score
+from torch.utils.data import Dataset, DataLoader
+
+PAD_TOKEN = "<pad>"
+UNK_TOKEN = "<unk>"
+
+DEFAULT_TEXT_COLUMN = "tokens_text"
+DEFAULT_FEATURE_COLUMNS = [
+    "feat_log_num_tokens",
+    "feat_log_num_chars",
+    "feat_avg_token_len",
+    "feat_emoji_density",
+    "feat_punct_density",
+    "feat_upper_ratio",
+    "feat_digit_ratio",
+]
+
+
+def debug(msg: str) -> None:
+    print(f"[DEBUG][GRU] {msg}")
+
+
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def get_default_data_dir() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dataset-vihsd"))
+
+
+def load_split(csv_path: str, text_column: str, feature_columns):
+    df = pd.read_csv(csv_path, encoding="utf-8-sig")
+    required_cols = {text_column, "label_id", *feature_columns}
+    if not required_cols.issubset(df.columns):
+        raise ValueError(f"{csv_path} must contain columns: {required_cols}")
+
+    texts = df[text_column].fillna("").astype(str).tolist()
+    meta_features = (
+        df[feature_columns]
+        .apply(pd.to_numeric, errors="coerce")
+        .fillna(0.0)
+        .astype(np.float32)
+        .values
+    )
+    labels = pd.to_numeric(df["label_id"], errors="raise").astype(int).tolist()
+    return texts, meta_features, labels
+
+
+def create_label_mapping(*label_lists):
+    all_labels = []
+    for labels in label_lists:
+        all_labels.extend(labels)
+    unique_labels = sorted(set(all_labels))
+    label2id = {label: idx for idx, label in enumerate(unique_labels)}
+    id2label = {idx: label for label, idx in label2id.items()}
+    return label2id, id2label
+
+
+def encode_labels(labels, label2id):
+    return [label2id[label] for label in labels]
+
+
+def tokenize(text: str):
+    return text.split()
+
+
+def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
+    counter = Counter()
+    for text in train_texts:
+        counter.update(tokenize(text))
+
+    vocab = {PAD_TOKEN: 0, UNK_TOKEN: 1}
+    for token, freq in counter.most_common():
+        if freq < min_freq:
+            continue
+        if len(vocab) >= max_vocab_size:
+            break
+        vocab[token] = len(vocab)
+    return vocab
+
+
+def encode_text(text, vocab, max_len):
+    token_ids = [vocab.get(tok, vocab[UNK_TOKEN]) for tok in tokenize(text)[:max_len]]
+    if len(token_ids) < max_len:
+        token_ids += [vocab[PAD_TOKEN]] * (max_len - len(token_ids))
+    return token_ids
+
+
+class TextDataset(Dataset):
+    def __init__(self, texts, meta_features, labels, vocab, max_len):
+        self.inputs = [encode_text(t, vocab, max_len) for t in texts]
+        self.meta_features = meta_features
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        x = torch.tensor(self.inputs[idx], dtype=torch.long)
+        meta = torch.tensor(self.meta_features[idx], dtype=torch.float)
+        y = torch.tensor(self.labels[idx], dtype=torch.long)
+        return x, meta, y
+
+
+class GRUClassifier(nn.Module):
+    def __init__(
+        self,
+        vocab_size,
+        embed_dim,
+        hidden_size,
+        num_classes,
+        num_layers=1,
+        bidirectional=True,
+        dropout=0.3,
+        padding_idx=0,
+        num_meta_features=0,
+        meta_hidden_size=32,
+    ):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+        self.gru = nn.GRU(
+            input_size=embed_dim,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=bidirectional,
+            dropout=dropout if num_layers > 1 else 0.0,
+        )
+        out_dim = hidden_size * (2 if bidirectional else 1)
+        self.dropout = nn.Dropout(dropout)
+        self.meta_proj = None
+        if num_meta_features > 0:
+            self.meta_proj = nn.Sequential(
+                nn.Linear(num_meta_features, meta_hidden_size),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+            )
+            out_dim = out_dim + meta_hidden_size
+        self.fc = nn.Linear(out_dim, num_classes)
+
+    def forward(self, input_ids, meta_features=None):
+        emb = self.embedding(input_ids)
+        outputs, _ = self.gru(emb)
+
+        mask = (input_ids != 0).unsqueeze(-1).float()
+        summed = (outputs * mask).sum(dim=1)
+        lengths = mask.sum(dim=1).clamp(min=1.0)
+        pooled = summed / lengths
+
+        pooled = self.dropout(pooled)
+        if self.meta_proj is not None and meta_features is not None:
+            meta_repr = self.meta_proj(meta_features)
+            pooled = torch.cat([pooled, meta_repr], dim=1)
+        return self.fc(pooled)
+
+
+def train_one_epoch(model, loader, optimizer, criterion, device):
+    model.train()
+    total_loss = 0.0
+    debug(f"Training epoch with {len(loader)} batches")
+
+    for batch_idx, (x, meta, y) in enumerate(loader, start=1):
+        x, meta, y = x.to(device), meta.to(device), y.to(device)
+
+        optimizer.zero_grad()
+        logits = model(x, meta)
+        loss = criterion(logits, y)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item() * x.size(0)
+        if batch_idx % 50 == 0 or batch_idx == len(loader):
+            debug(f"Train batch {batch_idx}/{len(loader)} | loss={loss.item():.4f}")
+
+    return total_loss / len(loader.dataset)
+
+
+@torch.no_grad()
+def evaluate(model, loader, criterion, device):
+    model.eval()
+    total_loss = 0.0
+    y_true, y_pred = [], []
+    debug(f"Evaluating with {len(loader)} batches")
+
+    for batch_idx, (x, meta, y) in enumerate(loader, start=1):
+        x, meta, y = x.to(device), meta.to(device), y.to(device)
+        logits = model(x, meta)
+        loss = criterion(logits, y)
+
+        preds = torch.argmax(logits, dim=1)
+        total_loss += loss.item() * x.size(0)
+        y_true.extend(y.cpu().tolist())
+        y_pred.extend(preds.cpu().tolist())
+        if batch_idx % 50 == 0 or batch_idx == len(loader):
+            debug(f"Eval batch {batch_idx}/{len(loader)}")
+
+    return total_loss / len(loader.dataset), y_true, y_pred
+
+
+def print_confusion_and_scores(y_true, y_pred, id2label):
+    label_ids = list(range(len(id2label)))
+    cm = confusion_matrix(y_true, y_pred, labels=label_ids)
+
+    cm_df = pd.DataFrame(
+        cm,
+        index=[f"Origin_{id2label[i]}" for i in label_ids],
+        columns=[f"Prediction_{id2label[i]}" for i in label_ids],
+    )
+
+    print("\n=== Confusion Matrix (Origin rows x Prediction columns) ===")
+    print(cm_df.to_string())
+
+    total = cm.sum()
+    rows = []
+    for i in label_ids:
+        tp = int(cm[i, i])
+        fn = int(cm[i, :].sum() - tp)
+        fp = int(cm[:, i].sum() - tp)
+        tn = int(total - tp - fn - fp)
+        rows.append(
+            {
+                "Class": id2label[i],
+                "TN": tn,
+                "TP": tp,
+                "FN": fn,
+                "FP": fp,
+            }
+        )
+
+    print("\n=== One-vs-Rest Table (TN TP FN FP) ===")
+    print(pd.DataFrame(rows).to_string(index=False))
+
+    acc = accuracy_score(y_true, y_pred)
+    f1_macro = f1_score(y_true, y_pred, average="macro")
+    print(f"\nAccuracy: {acc:.4f}")
+    print(f"F1-macro: {f1_macro:.4f}")
+
+
+def parse_feature_columns(raw: str):
+    columns = [c.strip() for c in raw.split(",") if c.strip()]
+    if not columns:
+        raise ValueError("feature_columns must include at least one column")
+    return columns
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train and evaluate GRU")
+    parser.add_argument("--data_dir", type=str, default=get_default_data_dir())
+    parser.add_argument("--train_file", type=str, default="features_train.csv")
+    parser.add_argument("--dev_file", type=str, default="features_dev.csv")
+    parser.add_argument("--test_file", type=str, default="features_test.csv")
+    parser.add_argument("--text_column", type=str, default=DEFAULT_TEXT_COLUMN)
+    parser.add_argument("--feature_columns", type=str, default=",".join(DEFAULT_FEATURE_COLUMNS))
+
+    parser.add_argument("--max_vocab_size", type=int, default=50000)
+    parser.add_argument("--min_freq", type=int, default=1)
+    parser.add_argument("--max_len", type=int, default=128)
+
+    parser.add_argument("--embed_dim", type=int, default=200)
+    parser.add_argument("--hidden_size", type=int, default=128)
+    parser.add_argument("--num_layers", type=int, default=1)
+    parser.add_argument("--bidirectional", action="store_true")
+    parser.add_argument("--dropout", type=float, default=0.3)
+
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--patience", type=int, default=3)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--meta_hidden_size", type=int, default=32)
+    parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "gru")),
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    feature_columns = parse_feature_columns(args.feature_columns)
+    debug("Starting script")
+    debug(f"Arguments: {vars(args)}")
+    set_seed(args.seed)
+    debug(f"Seed set to {args.seed}")
+    debug(f"Feature columns: {feature_columns}")
+
+    debug("Loading train/dev/test splits")
+    train_texts, train_meta, train_labels_raw = load_split(
+        os.path.join(args.data_dir, args.train_file),
+        text_column=args.text_column,
+        feature_columns=feature_columns,
+    )
+    dev_texts, dev_meta, dev_labels_raw = load_split(
+        os.path.join(args.data_dir, args.dev_file),
+        text_column=args.text_column,
+        feature_columns=feature_columns,
+    )
+    test_texts, test_meta, test_labels_raw = load_split(
+        os.path.join(args.data_dir, args.test_file),
+        text_column=args.text_column,
+        feature_columns=feature_columns,
+    )
+    debug(
+        f"Loaded rows | train={len(train_texts)}, dev={len(dev_texts)}, test={len(test_texts)}"
+    )
+
+    label2id, id2label = create_label_mapping(train_labels_raw, dev_labels_raw, test_labels_raw)
+    train_labels = encode_labels(train_labels_raw, label2id)
+    dev_labels = encode_labels(dev_labels_raw, label2id)
+    test_labels = encode_labels(test_labels_raw, label2id)
+    debug(f"Label mapping: {label2id}")
+
+    debug("Building vocabulary")
+    vocab = build_vocab(train_texts, max_vocab_size=args.max_vocab_size, min_freq=args.min_freq)
+    debug(f"Vocabulary size: {len(vocab)}")
+
+    debug("Building datasets and dataloaders")
+    train_ds = TextDataset(train_texts, train_meta, train_labels, vocab, args.max_len)
+    dev_ds = TextDataset(dev_texts, dev_meta, dev_labels, vocab, args.max_len)
+    test_ds = TextDataset(test_texts, test_meta, test_labels, vocab, args.max_len)
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+    )
+    dev_loader = DataLoader(
+        dev_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+    debug(
+        f"DataLoader batches | train={len(train_loader)}, dev={len(dev_loader)}, test={len(test_loader)}"
+    )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    debug(f"Using device: {device}")
+
+    model = GRUClassifier(
+        vocab_size=len(vocab),
+        embed_dim=args.embed_dim,
+        hidden_size=args.hidden_size,
+        num_classes=len(id2label),
+        num_layers=args.num_layers,
+        bidirectional=args.bidirectional,
+        dropout=args.dropout,
+        padding_idx=vocab[PAD_TOKEN],
+        num_meta_features=len(feature_columns),
+        meta_hidden_size=args.meta_hidden_size,
+    ).to(device)
+    debug("Model initialized")
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    criterion = nn.CrossEntropyLoss()
+    debug("Optimizer and criterion initialized")
+
+    best_dev_f1 = -1.0
+    best_state = None
+    no_improve = 0
+
+    for epoch in range(1, args.epochs + 1):
+        debug(f"Epoch {epoch}/{args.epochs} started")
+        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
+        dev_loss, dev_true, dev_pred = evaluate(model, dev_loader, criterion, device)
+
+        dev_acc = accuracy_score(dev_true, dev_pred)
+        dev_f1 = f1_score(dev_true, dev_pred, average="macro")
+
+        print(
+            f"Epoch {epoch:02d} | train_loss={train_loss:.4f} | "
+            f"dev_loss={dev_loss:.4f} | dev_acc={dev_acc:.4f} | dev_f1_macro={dev_f1:.4f}"
+        )
+
+        if dev_f1 > best_dev_f1:
+            best_dev_f1 = dev_f1
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            no_improve = 0
+            debug(f"New best dev_f1={best_dev_f1:.4f} at epoch {epoch}")
+        else:
+            no_improve += 1
+            debug(f"No improvement count: {no_improve}/{args.patience}")
+            if no_improve >= args.patience:
+                print(f"Early stopping at epoch {epoch} (patience={args.patience}).")
+                break
+
+    if best_state is not None:
+        debug("Loading best checkpoint from training")
+        model.load_state_dict(best_state)
+
+    debug("Running final evaluation on test set")
+    _, test_true, test_pred = evaluate(model, test_loader, criterion, device)
+
+    print("\n===== GRU Test Metrics =====")
+    print_confusion_and_scores(test_true, test_pred, id2label)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    save_path = os.path.join(args.output_dir, "best_gru.pt")
+    debug(f"Saving model to {save_path}")
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "vocab": vocab,
+            "label2id": label2id,
+            "id2label": id2label,
+            "text_column": args.text_column,
+            "feature_columns": feature_columns,
+            "args": vars(args),
+        },
+        save_path,
+    )
+    print(f"\nSaved best model to: {save_path}")
+    debug("Script finished successfully")
+
+
+if __name__ == "__main__":
+    main()
