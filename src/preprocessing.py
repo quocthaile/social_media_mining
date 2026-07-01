@@ -185,8 +185,8 @@ def run_pipeline(df, text_column):
     print("  [1/7] Đang đồng nhất bảng mã Unicode...")
     df['clean_text'] = df[text_column].apply(unicode_normalization)
     
-    print("  [2/7] Đang chuyển đổi chữ in thường...")
-    df['clean_text'] = df['clean_text'].str.lower()
+    # print("  [2/7] Đang chuyển đổi chữ in thường...")
+    # df['clean_text'] = df['clean_text'].str.lower()
     
     print("  [3/7] Đang lọc nhiễu kỹ thuật (URLs, Mentions, Hashtags)...")
     df['clean_text'] = df['clean_text'].apply(remove_noise)
@@ -250,10 +250,10 @@ def process_dataset(dataset_dir=None):
         df_dev[['clean_text', 'label_id']].to_csv(out_dev, index=False)
         df_test[['clean_text', 'label_id']].to_csv(out_test, index=False)
 
-        print(f"✅ TIỀN XỬ LÝ HOÀN TẤT! Kết quả: {out_train}, {out_dev}, {out_test}")
+        print(f"TIỀN XỬ LÝ HOÀN TẤT! Kết quả: {out_train}, {out_dev}, {out_test}")
 
     except Exception as e:
-        print(f"\n❌ [LỖI NGHIÊM TRỌNG]: {e}")
+        print(f"\n[LỖI NGHIÊM TRỌNG]: {e}")
 
 # Chạy chương trình
 if __name__ == "__main__":
