@@ -113,6 +113,44 @@ def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
     return vocab
 
 
+def load_fasttext_vectors(vec_path: str):
+    """Tải file FastText (.vec) vào bộ nhớ dưới dạng dictionary."""
+    debug(f"Đang tải FastText vectors từ {vec_path} (Quá trình này có thể mất vài phút)...")
+    embeddings_dict = {}
+    with open(vec_path, "r", encoding="utf-8") as f:
+        first_line = f.readline().split()
+        if len(first_line) != 2:
+            f.seek(0)
+
+        for line in f:
+            values = line.rstrip().split(" ")
+            word = values[0]
+            word_lower = word.lower()
+            vector = np.asarray(values[1:], dtype="float32")
+            embeddings_dict[word_lower] = vector
+
+    debug(f"Đã tải thành công {len(embeddings_dict)} vector từ vựng.")
+    return embeddings_dict
+
+
+def build_embedding_matrix(vocab, embeddings_dict, embed_dim=300):
+    """Ánh xạ FastText vectors vào vocab của model."""
+    debug("Đang khởi tạo Ma trận Embedding cho mô hình...")
+    vocab_size = len(vocab)
+    embedding_matrix = np.random.normal(scale=0.1, size=(vocab_size, embed_dim))
+
+    hits = 0
+    for word, idx in vocab.items():
+        if word == PAD_TOKEN:
+            embedding_matrix[idx] = np.zeros(embed_dim)
+        elif word in embeddings_dict:
+            embedding_matrix[idx] = embeddings_dict[word]
+            hits += 1
+
+    debug(f"Tỷ lệ khớp FastText: {hits}/{vocab_size} từ ({(hits / vocab_size) * 100:.2f}%).")
+    return torch.tensor(embedding_matrix, dtype=torch.float32)
+
+
 def encode_text(text, vocab, max_len):
     token_ids = [vocab.get(tok, vocab[UNK_TOKEN]) for tok in tokenize(text)[:max_len]]
     if len(token_ids) < max_len:
@@ -149,9 +187,19 @@ class GRUClassifier(nn.Module):
         padding_idx=0,
         num_meta_features=0,
         meta_hidden_size=32,
+        pretrained_embeddings=None
     ):
         super().__init__()
-        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+        # KIỂM TRA VÀ NẠP MA TRẬN NHÚNG
+        if pretrained_embeddings is not None:
+            # freeze=False cho phép cập nhật lại trọng số của FastText trong lúc train
+            # để mô hình thích nghi tốt hơn với từ lóng của dataset
+            self.embedding = nn.Embedding.from_pretrained(
+                pretrained_embeddings, freeze=False, padding_idx=padding_idx
+            )
+        else:
+            self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+
         self.gru = nn.GRU(
             input_size=embed_dim,
             hidden_size=hidden_size,
@@ -330,6 +378,12 @@ def parse_args():
     parser.add_argument("--max_len", type=int, default=128)
 
     parser.add_argument("--embed_dim", type=int, default=200)
+    parser.add_argument(
+        "--fasttext_path",
+        type=str,
+        default=os.path.join(get_default_data_dir(), "cc.vi.300.vec"),
+        help="Đường dẫn đến file FastText (mặc định trong dataset-vihsd)",
+    )
     parser.add_argument("--hidden_size", type=int, default=128)
     parser.add_argument("--num_layers", type=int, default=1)
     parser.add_argument("--bidirectional", action="store_true")
@@ -363,21 +417,22 @@ def main():
     debug(f"Feature columns: {feature_columns}")
 
     debug("Loading train/dev/test splits")
-    _, train_texts, train_meta, train_labels_raw = load_split(
+    train_texts, train_meta, train_labels_raw = load_split(
         os.path.join(args.data_dir, args.train_file),
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
-    _, dev_texts, dev_meta, dev_labels_raw = load_split(
+    dev_texts, dev_meta, dev_labels_raw = load_split(
         os.path.join(args.data_dir, args.dev_file),
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
-    test_df, test_texts, test_meta, test_labels_raw = load_split(
+    test_texts, test_meta, test_labels_raw = load_split(
         os.path.join(args.data_dir, args.test_file),
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
+    test_df = pd.read_csv(os.path.join(args.data_dir, args.test_file), encoding="utf-8-sig")
     debug(
         f"Loaded rows | train={len(train_texts)}, dev={len(dev_texts)}, test={len(test_texts)}"
     )
@@ -391,6 +446,19 @@ def main():
     debug("Building vocabulary")
     vocab = build_vocab(train_texts, max_vocab_size=args.max_vocab_size, min_freq=args.min_freq)
     debug(f"Vocabulary size: {len(vocab)}")
+
+    pretrained_embeddings = None
+    fasttext_path = args.fasttext_path
+    if not os.path.isabs(fasttext_path):
+        candidate_fasttext_path = os.path.join(args.data_dir, fasttext_path)
+        if os.path.exists(candidate_fasttext_path):
+            fasttext_path = candidate_fasttext_path
+
+    if os.path.exists(fasttext_path):
+        fasttext_dict = load_fasttext_vectors(fasttext_path)
+        pretrained_embeddings = build_embedding_matrix(vocab, fasttext_dict, embed_dim=args.embed_dim)
+    else:
+        print(f"[CẢNH BÁO] Không tìm thấy file {fasttext_path}. Mô hình sẽ khởi tạo nhúng ngẫu nhiên!")
 
     debug("Building datasets and dataloaders")
     train_ds = TextDataset(train_texts, train_meta, train_labels, vocab, args.max_len)
@@ -433,6 +501,7 @@ def main():
         padding_idx=vocab[PAD_TOKEN],
         num_meta_features=len(feature_columns),
         meta_hidden_size=args.meta_hidden_size,
+        pretrained_embeddings=pretrained_embeddings,
     ).to(device)
     debug("Model initialized")
 

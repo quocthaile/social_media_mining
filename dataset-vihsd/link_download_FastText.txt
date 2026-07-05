@@ -1,0 +1,3 @@
+https://dl.fbaipublicfiles.com/fasttext/vectors-crawl/cc.vi.300.vec.gz
+
+dataset-vihsd/cc.vi.300.vec

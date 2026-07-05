@@ -119,15 +119,18 @@ def build_one_split(input_path: str, output_path: str) -> None:
         raise ValueError(f"{input_path} must contain columns: {required_cols}")
 
     token_text = df["clean_text"].fillna("").astype(str).map(normalize_whitespace)
-    # ===== SỬA TÊN BIẾN CHO RÕ RÀNG NGỮ NGHĨA =====
+    
+    # ===== PHÂN LUỒNG VĂN BẢN (TEXT ROUTING) =====
     # 1. Text giữ nguyên gạch dưới (Dùng cho PhoBERT, TextCNN, GRU)
     phobert_segmented_text = token_text 
     
     # 2. Text bị bẻ gãy gạch dưới thành khoảng trắng (Dùng cho m-BERT, DistilBERT, BamiBERT)
     multilingual_raw_text = token_text.map(lambda t: t.replace("_", " "))
     
+    # Trích xuất đặc trưng meta (Chỉ chạy 1 lần)
     feature_df = token_text.map(extract_feature_row).apply(pd.Series)
 
+    # Khởi tạo DataFrame đầu ra
     out_df = pd.DataFrame(
         {
             "tokens_text": phobert_segmented_text,
@@ -135,18 +138,11 @@ def build_one_split(input_path: str, output_path: str) -> None:
         }
     )
 
-    transformer_text = token_text.map(lambda t: t.replace("_", " "))
-    feature_df = token_text.map(extract_feature_row).apply(pd.Series)
-
-    # out_df = pd.DataFrame(
-    #     {
-    #         "tokens_text": token_text,
-    #         "transformer_text": transformer_text,
-    #     }
-    # )
+    # Nối đặc trưng và nhãn
     out_df = pd.concat([out_df, feature_df], axis=1)
     out_df["label_id"] = pd.to_numeric(df["label_id"], errors="raise").astype(int)
 
+    # Sắp xếp lại thứ tự cột
     ordered_cols = ["tokens_text", "transformer_text", *FEATURE_COLUMNS, "label_id"]
     out_df = out_df[ordered_cols]
 
