@@ -191,14 +191,29 @@ class TextCNN(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
         self.dropout = nn.Dropout(dropout)
         classifier_in_dim = num_filters * len(kernel_sizes)
+        # self.meta_proj = None
+        # if num_meta_features > 0:
+        #     self.meta_proj = nn.Sequential(
+        #         nn.Linear(num_meta_features, meta_hidden_size),
+        #         nn.ReLU(),
+        #         nn.Dropout(dropout),
+        #     )
+        #     classifier_in_dim = classifier_in_dim + meta_hidden_size
+
         self.meta_proj = None
         if num_meta_features > 0:
             self.meta_proj = nn.Sequential(
+                # BƯỚC 1: Ép 11 features về cùng biên độ N(0,1)
+                nn.BatchNorm1d(num_meta_features), 
+                
+                # BƯỚC 2: Chiếu qua lớp Linear để học mối tương quan
                 nn.Linear(num_meta_features, meta_hidden_size),
                 nn.ReLU(),
                 nn.Dropout(dropout),
             )
+            # (Đối với GRU, biến ở dòng dưới là out_dim thay vì classifier_in_dim)
             classifier_in_dim = classifier_in_dim + meta_hidden_size
+
         self.fc = nn.Linear(classifier_in_dim, num_classes)
 
     def forward(self, input_ids, meta_features=None):

@@ -133,9 +133,21 @@ def load_fasttext_vectors(vec_path: str):
     return embeddings_dict
 
 
-def build_embedding_matrix(vocab, embeddings_dict, embed_dim=300):
+def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
     """Ánh xạ FastText vectors vào vocab của model."""
     debug("Đang khởi tạo Ma trận Embedding cho mô hình...")
+    if not embeddings_dict:
+        raise ValueError("embeddings_dict is empty, cannot build embedding matrix")
+
+    fasttext_dim = len(next(iter(embeddings_dict.values())))
+    if embed_dim is None:
+        embed_dim = fasttext_dim
+    elif embed_dim != fasttext_dim:
+        raise ValueError(
+            f"embed_dim mismatch: embed_dim={embed_dim}, FastText dim={fasttext_dim}. "
+            "Hãy đặt --embed_dim bằng đúng số chiều của FastText hoặc để script tự đồng bộ."
+        )
+
     vocab_size = len(vocab)
     embedding_matrix = np.random.normal(scale=0.1, size=(vocab_size, embed_dim))
 
@@ -210,15 +222,29 @@ class GRUClassifier(nn.Module):
         )
         out_dim = hidden_size * (2 if bidirectional else 1)
         self.dropout = nn.Dropout(dropout)
+        # self.meta_proj = None
+        # if num_meta_features > 0:
+        #     self.meta_proj = nn.Sequential(
+        #         nn.Linear(num_meta_features, meta_hidden_size),
+        #         nn.ReLU(),
+        #         nn.Dropout(dropout),
+        #     )
+        #     out_dim = out_dim + meta_hidden_size
         self.meta_proj = None
         if num_meta_features > 0:
             self.meta_proj = nn.Sequential(
+                # BƯỚC 1: Ép 11 features về cùng biên độ N(0,1)
+                nn.BatchNorm1d(num_meta_features), 
+                
+                # BƯỚC 2: Chiếu qua lớp Linear để học mối tương quan
                 nn.Linear(num_meta_features, meta_hidden_size),
                 nn.ReLU(),
                 nn.Dropout(dropout),
             )
             out_dim = out_dim + meta_hidden_size
         self.fc = nn.Linear(out_dim, num_classes)
+
+        
 
     def forward(self, input_ids, meta_features=None):
         emb = self.embedding(input_ids)
@@ -456,6 +482,13 @@ def main():
 
     if os.path.exists(fasttext_path):
         fasttext_dict = load_fasttext_vectors(fasttext_path)
+        fasttext_dim = len(next(iter(fasttext_dict.values())))
+        if args.embed_dim != fasttext_dim:
+            debug(
+                f"embed_dim={args.embed_dim} không khớp FastText dim={fasttext_dim}. "
+                f"Tự động đồng bộ embed_dim -> {fasttext_dim}."
+            )
+            args.embed_dim = fasttext_dim
         pretrained_embeddings = build_embedding_matrix(vocab, fasttext_dict, embed_dim=args.embed_dim)
     else:
         print(f"[CẢNH BÁO] Không tìm thấy file {fasttext_path}. Mô hình sẽ khởi tạo nhúng ngẫu nhiên!")
