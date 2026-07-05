@@ -16,11 +16,10 @@ FIX 3 — Lengthening Normalization:
     - Thêm Lớp 1: cắt dấu câu lặp   :))) → :)   ... → .   !!! → !
     - Giữ Lớp 2: cắt chữ cái lặp    gìiiii → gì (regex cũ)
 
-FIX 4 — Emoji Polarity Extraction:
-    - Chèn khoảng trắng quanh emoji trước khi demojize()
-      → tránh 😂😡 dính thành 1 token :face_with_tears_of_joy::enraged_face:
-    - Map emoji phổ biến sang tag phân cực tiếng Việt (EMOJI_POLARITY)
-      thay vì dùng tên tiếng Anh trung tính của demojize()
+FIX 4 — Emoji Feature Extraction:
+        - Chèn khoảng trắng quanh emoji trước khi demojize()
+            → tránh 😂😡 dính thành 1 token
+        - Chuẩn hóa emoji về token trung tính EMOJI_ALIAS_* để đưa vào mô hình
 """
 
 import os
@@ -31,6 +30,11 @@ import unicodedata
 import emoji
 from underthesea import word_tokenize
 from typing import Optional
+
+
+SPECIAL_TOKEN_PREFIXES = ("EMOJI_", "PUNC_", "EMOTICON_")
+LEXICON_TOKEN_PATTERN = re.compile(r"[\w_+-]+|[^\w\s]", flags=re.UNICODE)
+NEGATION_KEEP_TOKENS = {"không", "chẳng", "chả", "đừng", "chưa"}
 
 # ==========================================
 # CÁC HÀM TIỀN XỬ LÝ
@@ -461,15 +465,6 @@ def apply_lexicon(tokens: list[str], lexicon: dict[str, str]) -> list[str]:
     return normalized_tokens
 
 
-def replace_emoticons(text: str) -> str:
-    """Map emoticon ASCII sang tag cảm xúc trước khi xử lý dấu câu."""
-    def _repl(match: re.Match) -> str:
-        emoticon = match.group(0).lower()
-        return f" {EMOTICON_POLARITY.get(emoticon, 'EMOTICON_TRUNG_TINH')} "
-
-    return EMOTICON_PATTERN.sub(_repl, text)
-
-
 def separate_emoji_boundaries(text: str) -> str:
     """Tách emoji thô khỏi chữ ở biên token trước khi gán nhãn emoji."""
     emoji_spans = emoji.emoji_list(text)
@@ -503,16 +498,13 @@ def emoji_to_fallback_tag(emoji_text: str) -> str:
 
 def extract_emoji_features(text: str) -> str:
     """
-    [FIX 4] Bước 4: Khai thác đặc trưng phân cực Emoji.
+        [FIX 4] Bước 4: Khai thác đặc trưng emoji trung tính.
 
     Thay đổi so với v1:
       - Chèn khoảng trắng quanh mỗi emoji trước khi xử lý
         → tránh 😂😡 bị ghép thành 1 token dính
-      - Map emoji phổ biến sang tag phân cực tiếng Việt (EMOJI_POLARITY)
-        thay vì dùng tên tiếng Anh của demojize() (ít ngữ nghĩa hơn)
-      - Emoji không có trong bảng → fallback về demojize()
+            - Chuyển toàn bộ emoji sang token EMOJI_ALIAS_* bằng demojize()
     """
-    text = replace_emoticons(text)
     text = separate_emoji_boundaries(text)
 
     # Xử lý theo cụm emoji (grapheme) để không tách rời variation selector như '❤️'
@@ -530,11 +522,7 @@ def extract_emoji_features(text: str) -> str:
         if start > cursor:
             result.append(text[cursor:start])
 
-        tag = EMOJI_POLARITY.get(symbol)
-        if tag:
-            result.append(f" {tag} ")
-        else:
-            result.append(f" {emoji_to_fallback_tag(symbol)} ")
+        result.append(f" {emoji_to_fallback_tag(symbol)} ")
 
         cursor = end
 
@@ -577,22 +565,50 @@ def normalize_lengthened_words(text: str) -> str:
     return text
 
 
-def replace_slang_and_abbreviations(text: str) -> str:
-    """
-    [FIX 2] Bước 6: Chuẩn hóa từ lóng và viết tắt — 2 từ điển riêng biệt.
+# def replace_slang_and_abbreviations(text: str) -> str:
+#     """
+#     [FIX 2] Bước 6: Chuẩn hóa từ lóng và viết tắt — 2 từ điển riêng biệt.
 
-    Thay đổi so với v1:
-      - ABBREV_DICT (viết tắt) áp dụng TRƯỚC
-      - SLANG_DICT  (từ lóng)  áp dụng SAU
-      Lý do: viết tắt thường là prefix của từ lóng (vd: "dc" → "được",
-      không nhầm với "dcm" → "địt cụ mày" vì "dcm" khớp exact match)
+#     Thay đổi so với v1:
+#       - ABBREV_DICT (viết tắt) áp dụng TRƯỚC
+#       - SLANG_DICT  (từ lóng)  áp dụng SAU
+#       Lý do: viết tắt thường là prefix của từ lóng (vd: "dc" → "được",
+#       không nhầm với "dcm" → "địt cụ mày" vì "dcm" khớp exact match)
+#     """
+#     words = tokenize_keep_punctuation(text)
+#     # Áp dụng ABBREV_DICT trước
+#     words = apply_lexicon(words, ABBREV_DICT)
+#     # Áp dụng SLANG_DICT sau
+#     words = apply_lexicon(words, SLANG_DICT)
+#     return ' '.join(words)
+def replace_slang_and_abbreviations_cased(
+    text: str,
+    slang_dict: dict[str, str] = SLANG_DICT,
+    abbrev_dict: dict[str, str] = ABBREV_DICT,
+) -> str:
     """
-    words = tokenize_keep_punctuation(text)
-    # Áp dụng ABBREV_DICT trước
-    words = apply_lexicon(words, ABBREV_DICT)
-    # Áp dụng SLANG_DICT sau
-    words = apply_lexicon(words, SLANG_DICT)
-    return ' '.join(words)
+    Hàm thay thế từ lóng/viết tắt nhưng BẢO TOÀN cấu trúc viết hoa/thường 
+    của các từ ngữ khác trong câu.
+    """
+    # Tách từ dựa trên khoảng trắng
+    tokens = text.split()
+    processed_tokens = []
+    
+    for token in tokens:
+        # Lấy dạng lowercase chỉ để dùng làm key tra cứu từ điển
+        token_lower = token.lower()
+        
+        # Ưu tiên tra từ điển viết tắt trước, từ lóng sau
+        if token_lower in abbrev_dict:
+            # Nếu tìm thấy, thay thế bằng định dạng chuẩn của từ điển
+            processed_tokens.append(abbrev_dict[token_lower])
+        elif token_lower in slang_dict:
+            processed_tokens.append(slang_dict[token_lower])
+        else:
+            # NẾU KHÔNG CÓ TRONG TỪ ĐIỂN -> GIỮ NGUYÊN GỐC (Bảo toàn Cased)
+            processed_tokens.append(token)
+            
+    return " ".join(processed_tokens)
 
 
 def replace_compound_words(text: str) -> str:
@@ -640,7 +656,7 @@ def run_quick_regression_checks() -> None:
         text = remove_noise(text)
         text = extract_emoji_features(text)
         text = normalize_lengthened_words(text)
-        text = replace_slang_and_abbreviations(text)
+        text = replace_slang_and_abbreviations_cased(text)
         text = replace_compound_words(text)
         text = segment_and_remove_stopwords(text)
         text = re.sub(r'\s+', ' ', text).strip()
@@ -658,8 +674,8 @@ def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
     print("  [1/7] Đồng nhất bảng mã Unicode NFC (fix NFD/mixed)...")
     df['clean_text'] = df[text_column].apply(unicode_normalization)
 
-    print("  [2/7] Chuyển về chữ thường...")
-    df['clean_text'] = df['clean_text'].str.lower()
+    # print("  [2/7] Chuyển về chữ thường...")
+    # df['clean_text'] = df['clean_text'].str.lower()
 
     print("  [3/7] Lọc nhiễu kỹ thuật (URL, @mention, #hashtag)...")
     df['clean_text'] = df['clean_text'].apply(remove_noise)
@@ -671,7 +687,7 @@ def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
     df['clean_text'] = df['clean_text'].apply(normalize_lengthened_words)
 
     print("  [6/7] Chuẩn hóa Teencode: ABBREV_DICT → SLANG_DICT...")
-    df['clean_text'] = df['clean_text'].apply(replace_slang_and_abbreviations)
+    df['clean_text'] = df['clean_text'].apply(replace_slang_and_abbreviations_cased)
 
     print("  [7/8] Gộp từ ghép phổ biến thành token underscore...")
     df['clean_text'] = df['clean_text'].apply(replace_compound_words)
@@ -687,7 +703,7 @@ def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
 
 
 def process_dataset(dataset_dir: str | None = None):
-    """Hàm main: đọc train/dev/test → xử lý → lưu preprocessed_v2_*.csv."""
+    """Hàm main: đọc origin_tran/dev/test → xử lý → lưu preprocessed_v2_*.csv."""
     TEXT_COLUMN = 'free_text'
 
     if dataset_dir is None:
@@ -697,9 +713,9 @@ def process_dataset(dataset_dir: str | None = None):
 
     try:
         print(f"--- BẮT ĐẦU ĐỌC DỮ LIỆU TỪ: {dataset_dir} ---")
-        df_train = pd.read_csv(os.path.join(dataset_dir, 'train.csv'))
-        df_dev   = pd.read_csv(os.path.join(dataset_dir, 'dev.csv'))
-        df_test  = pd.read_csv(os.path.join(dataset_dir, 'test.csv'))
+        df_train = pd.read_csv(os.path.join(dataset_dir, 'origin_train.csv'))
+        df_dev   = pd.read_csv(os.path.join(dataset_dir, 'origin_dev.csv'))
+        df_test  = pd.read_csv(os.path.join(dataset_dir, 'origin_test.csv'))
 
         print(f"\n▶ ĐANG XỬ LÝ TẬP TRAIN ({len(df_train)} dòng)...")
         df_train = run_pipeline(df_train, TEXT_COLUMN)

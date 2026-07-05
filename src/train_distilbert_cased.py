@@ -8,5 +8,6 @@ if __name__ == "__main__":
         default_model_name="distilbert-base-multilingual-cased",
         default_output_subdir="distilbert_cased",
         run_name="DistilBERT cased",
+        default_text_column="transformer_text"
     )
     print("[DEBUG][DistilBERT-cased] Wrapper finished")

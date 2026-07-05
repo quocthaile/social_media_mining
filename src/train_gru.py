@@ -40,13 +40,33 @@ def get_default_data_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dataset-vihsd"))
 
 
+# def load_split(csv_path: str, text_column: str, feature_columns):
+#     df = pd.read_csv(csv_path, encoding="utf-8-sig")
+#     required_cols = {text_column, "label_id", *feature_columns}
+#     if not required_cols.issubset(df.columns):
+#         raise ValueError(f"{csv_path} must contain columns: {required_cols}")
+
+#     texts = df[text_column].fillna("").astype(str).tolist()
+#     meta_features = (
+#         df[feature_columns]
+#         .apply(pd.to_numeric, errors="coerce")
+#         .fillna(0.0)
+#         .astype(np.float32)
+#         .values
+#     )
+#     labels = pd.to_numeric(df["label_id"], errors="raise").astype(int).tolist()
+#     return df, texts, meta_features, labels
 def load_split(csv_path: str, text_column: str, feature_columns):
     df = pd.read_csv(csv_path, encoding="utf-8-sig")
     required_cols = {text_column, "label_id", *feature_columns}
     if not required_cols.issubset(df.columns):
         raise ValueError(f"{csv_path} must contain columns: {required_cols}")
 
-    texts = df[text_column].fillna("").astype(str).tolist()
+    # ===== THAY ĐỔI TẠI ĐÂY =====
+    # Ép toàn bộ cột text về chữ in thường ngay khi vừa load từ CSV
+    texts = df[text_column].fillna("").astype(str).str.lower().tolist()
+    # ============================
+    
     meta_features = (
         df[feature_columns]
         .apply(pd.to_numeric, errors="coerce")
@@ -55,8 +75,10 @@ def load_split(csv_path: str, text_column: str, feature_columns):
         .values
     )
     labels = pd.to_numeric(df["label_id"], errors="raise").astype(int).tolist()
-    return df, texts, meta_features, labels
-
+    
+    # Đối với train_gru.py: return df, texts, meta_features, labels
+    # Đối với train_textcnn.py: return texts, meta_features, labels
+    return texts, meta_features, labels
 
 def create_label_mapping(*label_lists):
     all_labels = []

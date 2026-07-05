@@ -20,7 +20,7 @@ from transformers import (
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 
-DEFAULT_TEXT_COLUMN = "transformer_text"
+# DEFAULT_TEXT_COLUMN = "transformer_text"
 DEFAULT_FEATURE_COLUMNS = [
     "feat_log_num_tokens",
     "feat_log_num_chars",
@@ -273,14 +273,22 @@ def parse_feature_columns(raw: str):
     return columns
 
 
-def run_experiment(default_model_name: str, default_output_subdir: str, run_name: str) -> None:
-    parser = argparse.ArgumentParser(description=f"Train and evaluate {run_name}")
-    parser.add_argument("--model_name", type=str, default=default_model_name)
+# THÊM tham số default_text_column="tokens_text" vào hàm
+def run_experiment(
+    default_model_name="vinai/phobert-base",
+    default_output_subdir="phobert",
+    run_name="PhoBERT",
+    default_text_column="tokens_text"  # <--- SỬA TẠI ĐÂY: Mặc định PhoBERT dùng text CÓ gạch dưới
+):
+    parser = argparse.ArgumentParser(description=f"Train {run_name}")
     parser.add_argument("--data_dir", type=str, default=get_default_data_dir())
     parser.add_argument("--train_file", type=str, default="features_train.csv")
     parser.add_argument("--dev_file", type=str, default="features_dev.csv")
     parser.add_argument("--test_file", type=str, default="features_test.csv")
-    parser.add_argument("--text_column", type=str, default=DEFAULT_TEXT_COLUMN)
+    
+    # SỬA TẠI ĐÂY: Trỏ biến default vào tham số mới truyền vào
+    parser.add_argument("--text_column", type=str, default=default_text_column) 
+    
     parser.add_argument("--feature_columns", type=str, default=",".join(DEFAULT_FEATURE_COLUMNS))
     parser.add_argument("--max_len", type=int, default=128)
     parser.add_argument("--batch_size", type=int, default=16)

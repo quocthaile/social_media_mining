@@ -38,5 +38,6 @@ if __name__ == "__main__":
         default_model_name="Qualcomm-AI-Research/BamiBERT",
         default_output_subdir="bamibert",
         run_name="BamiBERT",
+        default_text_column="transformer_text"
     )
     print("[DEBUG][BamiBERT] Wrapper finished")
