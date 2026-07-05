@@ -20,6 +20,9 @@ FEATURE_COLUMNS = [
     "feat_digit_ratio",
 ]
 
+EMOJI_TAG_PATTERN = re.compile(r"\bEMOJI_[A-Z_]+\b")
+EMOJI_ALIAS_PATTERN = re.compile(r":\s*[a-z0-9_+\-]+\s*:", re.IGNORECASE)
+
 
 def debug(msg: str) -> None:
     print(f"[DEBUG][FeatureBuilder] {msg}")
@@ -34,10 +37,9 @@ def normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", normalized)
 
 
-def count_emoji_aliases(text: str) -> int:
-    # Matches both compact form (:smile:) and spaced form (: smile :).
-    matches = re.findall(r":\s*[a-z0-9_+\-]+\s*:", text.lower())
-    return len(matches)
+def count_emoji_features(text: str) -> int:
+    """Count emoji signals emitted by preprocessing plus demojize fallbacks."""
+    return len(EMOJI_TAG_PATTERN.findall(text)) + len(EMOJI_ALIAS_PATTERN.findall(text))
 
 
 def count_punctuation(text: str) -> int:
@@ -50,14 +52,14 @@ def extract_feature_row(text: str) -> dict:
     num_chars = len(text)
 
     avg_token_len = float(np.mean([len(tok) for tok in tokens])) if num_tokens > 0 else 0.0
-    emoji_count = count_emoji_aliases(text)
+    emoji_count = count_emoji_features(text)
     punct_count = count_punctuation(text)
 
     alpha_count = sum(1 for ch in text if ch.isalpha())
     upper_count = sum(1 for ch in text if ch.isalpha() and ch.isupper())
     digit_count = sum(1 for ch in text if ch.isdigit())
 
-    feat = {
+    return {
         "feat_log_num_tokens": float(np.log1p(num_tokens)),
         "feat_log_num_chars": float(np.log1p(num_chars)),
         "feat_avg_token_len": float(avg_token_len),
@@ -66,7 +68,6 @@ def extract_feature_row(text: str) -> dict:
         "feat_upper_ratio": float(upper_count / max(alpha_count, 1)),
         "feat_digit_ratio": float(digit_count / max(num_chars, 1)),
     }
-    return feat
 
 
 def build_one_split(input_path: str, output_path: str) -> None:
@@ -99,20 +100,17 @@ def build_one_split(input_path: str, output_path: str) -> None:
 
 
 def process_dataset(data_dir: str, input_prefix: str, output_prefix: str) -> None:
-    split_names = ["train", "dev", "test"]
-    for split in split_names:
-        input_name = f"{input_prefix}_{split}.csv"
-        output_name = f"{output_prefix}_{split}.csv"
-        input_path = os.path.join(data_dir, input_name)
-        output_path = os.path.join(data_dir, output_name)
+    for split in ["train", "dev", "test"]:
+        input_path = os.path.join(data_dir, f"{input_prefix}_{split}.csv")
+        output_path = os.path.join(data_dir, f"{output_prefix}_{split}.csv")
         build_one_split(input_path, output_path)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Build unified feature datasets from preprocessed CSV files "
-            "for GRU, TextCNN, PhoBERT, BERT-cased, and DistilBERT-cased."
+            "Build feature datasets from preprocessing outputs for GRU, "
+            "TextCNN, PhoBERT, BERT-cased, and DistilBERT-cased."
         )
     )
     parser.add_argument("--data_dir", type=str, default=get_default_data_dir())
