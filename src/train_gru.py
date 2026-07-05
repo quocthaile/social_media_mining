@@ -1,4 +1,3 @@
-import gzip
 import os
 import random
 import argparse
@@ -9,8 +8,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix, accuracy_score, f1_score
-from sklearn.utils.class_weight import compute_class_weight
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.utils.data import Dataset, DataLoader
 
 PAD_TOKEN = "<pad>"
 UNK_TOKEN = "<unk>"
@@ -116,21 +114,6 @@ class TextDataset(Dataset):
         return x, meta, y
 
 
-class AttentionPooling(nn.Module):
-    """Additive attention over GRU output tokens; ignores padding positions."""
-
-    def __init__(self, hidden_size: int):
-        super().__init__()
-        self.attn = nn.Linear(hidden_size, 1, bias=False)
-
-    def forward(self, outputs: torch.Tensor, pad_mask: torch.Tensor) -> torch.Tensor:
-        # outputs : (B, T, H)   pad_mask : (B, T) True = non-padding
-        scores = self.attn(outputs).squeeze(-1)           # (B, T)
-        scores = scores.masked_fill(~pad_mask, float("-inf"))
-        weights = torch.softmax(scores, dim=1).unsqueeze(-1)  # (B, T, 1)
-        return (outputs * weights).sum(dim=1)             # (B, H)
-
-
 class GRUClassifier(nn.Module):
     def __init__(
         self,
@@ -144,16 +127,9 @@ class GRUClassifier(nn.Module):
         padding_idx=0,
         num_meta_features=0,
         meta_hidden_size=32,
-        pretrained_embeddings=None,
     ):
         super().__init__()
-        if pretrained_embeddings is not None:
-            weight = torch.tensor(pretrained_embeddings, dtype=torch.float)
-            self.embedding = nn.Embedding.from_pretrained(
-                weight, freeze=False, padding_idx=padding_idx
-            )
-        else:
-            self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
         self.gru = nn.GRU(
             input_size=embed_dim,
             hidden_size=hidden_size,
@@ -162,26 +138,26 @@ class GRUClassifier(nn.Module):
             bidirectional=bidirectional,
             dropout=dropout if num_layers > 1 else 0.0,
         )
-        gru_out_dim = hidden_size * (2 if bidirectional else 1)
-        self.attention = AttentionPooling(gru_out_dim)
+        out_dim = hidden_size * (2 if bidirectional else 1)
         self.dropout = nn.Dropout(dropout)
         self.meta_proj = None
-        fc_in_dim = gru_out_dim
         if num_meta_features > 0:
             self.meta_proj = nn.Sequential(
                 nn.Linear(num_meta_features, meta_hidden_size),
                 nn.ReLU(),
                 nn.Dropout(dropout),
             )
-            fc_in_dim = gru_out_dim + meta_hidden_size
-        self.fc = nn.Linear(fc_in_dim, num_classes)
+            out_dim = out_dim + meta_hidden_size
+        self.fc = nn.Linear(out_dim, num_classes)
 
     def forward(self, input_ids, meta_features=None):
         emb = self.embedding(input_ids)
         outputs, _ = self.gru(emb)
 
-        pad_mask = (input_ids != 0)          # (B, T) True = non-padding token
-        pooled = self.attention(outputs, pad_mask)
+        mask = (input_ids != 0).unsqueeze(-1).float()
+        summed = (outputs * mask).sum(dim=1)
+        lengths = mask.sum(dim=1).clamp(min=1.0)
+        pooled = summed / lengths
 
         pooled = self.dropout(pooled)
         if self.meta_proj is not None and meta_features is not None:
@@ -231,76 +207,6 @@ def evaluate(model, loader, criterion, device):
             debug(f"Eval batch {batch_idx}/{len(loader)}")
 
     return total_loss / len(loader.dataset), y_true, y_pred
-
-
-def load_fasttext_embeddings(vocab: dict, fasttext_path: str, embed_dim: int) -> np.ndarray:
-    """
-    Build an embedding matrix (vocab_size x embed_dim) from a pre-trained fastText file.
-
-    Supported formats (no extra library required for text formats):
-      - .vec        : fastText text format
-      - .vec.gz     : gzip-compressed text format
-      - .bin        : binary format — requires `pip install fasttext-wheel`
-                      (not yet available for Python 3.14; use .vec instead)
-
-    Download Vietnamese vectors from:
-      https://fasttext.cc/docs/en/crawl-vectors.html
-      e.g. cc.vi.300.vec.gz  (text format, ~1.2 GB compressed)
-    """
-    debug(f"Loading fastText embeddings from: {fasttext_path}")
-    path_lower = fasttext_path.lower()
-    matrix = np.zeros((len(vocab), embed_dim), dtype=np.float32)
-
-    if path_lower.endswith(".bin"):
-        try:
-            import fasttext as _ft  # noqa: PLC0415
-
-            ft = _ft.load_model(fasttext_path)
-            found = sum(
-                1
-                for word, idx in vocab.items()
-                if word not in (PAD_TOKEN, UNK_TOKEN)
-                and _assign_vec(matrix, idx, ft.get_word_vector(word), embed_dim)
-            )
-            debug(f"fastText (.bin): {found}/{len(vocab)} tokens loaded")
-        except ImportError as exc:
-            raise ImportError(
-                "Binary fastText (.bin) requires the 'fasttext' package which is not yet\n"
-                "available for Python 3.14.\n"
-                "Solution: download the .vec.gz text file instead:\n"
-                "  https://fasttext.cc/docs/en/crawl-vectors.html  (cc.vi.300.vec.gz)\n"
-                "Then pass: --fasttext_path path/to/cc.vi.300.vec.gz"
-            ) from exc
-    else:
-        open_fn = gzip.open if path_lower.endswith(".gz") else open
-        found = 0
-        with open_fn(fasttext_path, "rt", encoding="utf-8") as fh:
-            fh.readline()  # skip header: "<n_vocab> <dim>"
-            for line in fh:
-                parts = line.rstrip().split(" ")
-                if len(parts) < embed_dim + 1:
-                    continue
-                word = parts[0]
-                if word not in vocab:
-                    continue
-                try:
-                    vec = np.array(parts[1:], dtype=np.float32)
-                    if vec.shape[0] == embed_dim:
-                        matrix[vocab[word]] = vec
-                        found += 1
-                except ValueError:
-                    continue
-        debug(f"fastText (.vec): {found}/{len(vocab)} tokens loaded")
-
-    return matrix
-
-
-def _assign_vec(matrix, idx, vec, embed_dim):
-    """Helper to assign a vector; returns True if dimension matches."""
-    if len(vec) == embed_dim:
-        matrix[idx] = vec
-        return True
-    return False
 
 
 def print_confusion_and_scores(y_true, y_pred, id2label):
@@ -404,15 +310,10 @@ def parse_args():
     parser.add_argument("--embed_dim", type=int, default=200)
     parser.add_argument("--hidden_size", type=int, default=128)
     parser.add_argument("--num_layers", type=int, default=1)
-    parser.add_argument(
-        "--bidirectional",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Bidirectional GRU (default: True). Use --no-bidirectional to disable.",
-    )
+    parser.add_argument("--bidirectional", action="store_true")
     parser.add_argument("--dropout", type=float, default=0.3)
 
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=100)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--patience", type=int, default=3)
@@ -427,26 +328,6 @@ def parse_args():
     parser.add_argument("--confusion_matrix_file", type=str, default="confusion_matrix_test.csv")
     parser.add_argument("--ovr_metrics_file", type=str, default="ovr_metrics_test.csv")
     parser.add_argument("--misclassified_file", type=str, default="misclassified_test.csv")
-    # --- Optimization flags ---
-    parser.add_argument(
-        "--class_weight_mode",
-        type=str,
-        choices=["balanced", "none"],
-        default="balanced",
-        help="'balanced' weights CrossEntropyLoss inversely by class frequency. 'none' = uniform.",
-    )
-    parser.add_argument(
-        "--use_weighted_sampler",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="WeightedRandomSampler on train set to oversample minority classes (default: True).",
-    )
-    parser.add_argument(
-        "--fasttext_path",
-        type=str,
-        default=None,
-        help="Path to pre-trained fastText vectors (.vec, .vec.gz). Optional.",
-    )
     return parser.parse_args()
 
 
@@ -489,37 +370,17 @@ def main():
     vocab = build_vocab(train_texts, max_vocab_size=args.max_vocab_size, min_freq=args.min_freq)
     debug(f"Vocabulary size: {len(vocab)}")
 
-    pretrained_embeddings = None
-    if args.fasttext_path:
-        pretrained_embeddings = load_fasttext_embeddings(vocab, args.fasttext_path, args.embed_dim)
-
     debug("Building datasets and dataloaders")
     train_ds = TextDataset(train_texts, train_meta, train_labels, vocab, args.max_len)
     dev_ds = TextDataset(dev_texts, dev_meta, dev_labels, vocab, args.max_len)
     test_ds = TextDataset(test_texts, test_meta, test_labels, vocab, args.max_len)
 
-    if args.use_weighted_sampler:
-        class_counts = Counter(train_labels)
-        sample_weights = [1.0 / class_counts[lbl] for lbl in train_labels]
-        sampler = WeightedRandomSampler(
-            weights=sample_weights,
-            num_samples=len(sample_weights),
-            replacement=True,
-        )
-        train_loader = DataLoader(
-            train_ds,
-            batch_size=args.batch_size,
-            sampler=sampler,
-            num_workers=args.num_workers,
-        )
-        debug(f"WeightedRandomSampler enabled | class_counts: {dict(sorted(class_counts.items()))}")
-    else:
-        train_loader = DataLoader(
-            train_ds,
-            batch_size=args.batch_size,
-            shuffle=True,
-            num_workers=args.num_workers,
-        )
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+    )
     dev_loader = DataLoader(
         dev_ds,
         batch_size=args.batch_size,
@@ -550,25 +411,11 @@ def main():
         padding_idx=vocab[PAD_TOKEN],
         num_meta_features=len(feature_columns),
         meta_hidden_size=args.meta_hidden_size,
-        pretrained_embeddings=pretrained_embeddings,
     ).to(device)
     debug("Model initialized")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    if args.class_weight_mode == "balanced":
-        class_weight_arr = compute_class_weight(
-            class_weight="balanced",
-            classes=np.array(sorted(id2label.keys())),
-            y=train_labels,
-        )
-        weight_tensor = torch.tensor(class_weight_arr, dtype=torch.float).to(device)
-        criterion = nn.CrossEntropyLoss(weight=weight_tensor)
-        debug(
-            f"Class weights (balanced): "
-            + str({id2label[i]: round(float(w), 4) for i, w in enumerate(class_weight_arr)})
-        )
-    else:
-        criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss()
     debug("Optimizer and criterion initialized")
 
     best_dev_f1 = -1.0

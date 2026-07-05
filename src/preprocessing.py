@@ -33,43 +33,7 @@ from underthesea import word_tokenize
 from typing import Optional
 
 # ==========================================
-# BẢNG MAP EMOJI → TAG PHÂN CỰC [FIX 4]
-# ==========================================
-# Ưu tiên: tra bảng này trước; emoji không có trong bảng
-# mới fallback về demojize() tiếng Anh.
-EMOJI_POLARITY = {
-    # Tích cực — vui / yêu
-    "😀": "EMOJI_TICH_CUC", "😁": "EMOJI_TICH_CUC", "😄": "EMOJI_TICH_CUC",
-    "😆": "EMOJI_TICH_CUC", "😊": "EMOJI_TICH_CUC", "🙂": "EMOJI_TICH_CUC",
-    "😍": "EMOJI_TICH_CUC", "🥰": "EMOJI_TICH_CUC", "😘": "EMOJI_TICH_CUC",
-    "😂": "EMOJI_TICH_CUC", "🤣": "EMOJI_TICH_CUC", "😅": "EMOJI_TICH_CUC",
-    "😎": "EMOJI_TICH_CUC", "🤩": "EMOJI_TICH_CUC", "😇": "EMOJI_TICH_CUC",
-    "❤":  "EMOJI_TICH_CUC", "❤️": "EMOJI_TICH_CUC", "🧡": "EMOJI_TICH_CUC",
-    "💛": "EMOJI_TICH_CUC", "💚": "EMOJI_TICH_CUC", "💙": "EMOJI_TICH_CUC",
-    "💜": "EMOJI_TICH_CUC", "🖤": "EMOJI_TICH_CUC", "💕": "EMOJI_TICH_CUC",
-    "💞": "EMOJI_TICH_CUC", "💓": "EMOJI_TICH_CUC", "💗": "EMOJI_TICH_CUC",
-    "👍": "EMOJI_TICH_CUC", "👏": "EMOJI_TICH_CUC", "🙌": "EMOJI_TICH_CUC",
-    "✅": "EMOJI_TICH_CUC", "🎉": "EMOJI_TICH_CUC", "🎊": "EMOJI_TICH_CUC",
-    "🌟": "EMOJI_TICH_CUC", "⭐": "EMOJI_TICH_CUC", "🔥": "EMOJI_TICH_CUC",
-
-    # Tiêu cực nhẹ — buồn / thất vọng
-    "😢": "EMOJI_TIEU_CUC", "😭": "EMOJI_TIEU_CUC", "😞": "EMOJI_TIEU_CUC",
-    "😔": "EMOJI_TIEU_CUC", "😟": "EMOJI_TIEU_CUC", "😕": "EMOJI_TIEU_CUC",
-    "🙁": "EMOJI_TIEU_CUC", "😣": "EMOJI_TIEU_CUC", "😩": "EMOJI_TIEU_CUC",
-    "😰": "EMOJI_TIEU_CUC", "😱": "EMOJI_TIEU_CUC", "😓": "EMOJI_TIEU_CUC",
-    "😒": "EMOJI_TIEU_CUC", "😑": "EMOJI_TIEU_CUC", "🙄": "EMOJI_TIEU_CUC",
-
-    # Tiêu cực mạnh — tức giận / thù địch / xúc phạm
-    "😡": "EMOJI_GIAN_DU",  "🤬": "EMOJI_GIAN_DU",  "😠": "EMOJI_GIAN_DU",
-    "😤": "EMOJI_GIAN_DU",  "👿": "EMOJI_GIAN_DU",  "😈": "EMOJI_GIAN_DU",
-    "🖕": "EMOJI_XUC_PHAM", "💩": "EMOJI_XUC_PHAM", "🤮": "EMOJI_XUC_PHAM",
-    "🤢": "EMOJI_XUC_PHAM", "💀": "EMOJI_XUC_PHAM", "☠️": "EMOJI_XUC_PHAM",
-    "👎": "EMOJI_TIEU_CUC",
-}
-
-# ==========================================
-# TỪ ĐIỂN TỪ LÓNG (SLANG) [FIX 2]
-# Chỉ chứa: từ tục, từ biến âm cố tình, teencode mang nghĩa xúc phạm
+# CÁC HÀM TIỀN XỬ LÝ
 # ==========================================
 _SLANG_DICT_RAW = {
     # Nhóm từ tục / xúc phạm trực tiếp
@@ -137,6 +101,8 @@ _SLANG_DICT_RAW = {
     "ah":      "à",
     "kkk":     "haha",
     "khong":   "không",
+    "khongg":  "không",
+    "khonggg": "không",
 }
 
 # ==========================================
@@ -159,6 +125,8 @@ _ABBREV_DICT_RAW = {
     "mk":    "mình",
     "ck":    "chồng",
     "vk":    "vợ",
+    "b":     "bạn",
+    "a":     "anh",
 
     # Động từ / trạng từ
     "dc":    "được",
@@ -226,18 +194,201 @@ _ABBREV_DICT_RAW = {
     "dlv":   "dư_luận_viên",
     "hvb":   "hồng_vệ_binh",
     "3":     "ba",
+    "bnhiu":  "bao_nhiêu",
+    "ddi":   "đi",
 }
 
+# ==========================================
+# TỪ ĐIỂN TỪ GHÉP / CỤM TỪ THƯỜNG GẶP TRONG train.csv + dev.csv
+# Giữ nguyên thành một token bằng dấu underscore trước bước loại stopwords.
+# ==========================================
+_COMPOUND_DICT_RAW = {
+    "nhà nước": "nhà_nước",
+    "chính phủ": "chính_phủ",
+    "quốc gia": "quốc_gia",
+    "nhân dân": "nhân_dân",
+    "dư luận viên": "dư_luận_viên",
+    "nhà báo": "nhà_báo",
+    "báo công an": "báo_công_an",
+    "bộ đội": "bộ_đội",
+    "công an": "công_an",
+    "cách ly": "cách_ly",
+    "khâu trang": "khẩu_trang",
+    "khẩu trang": "khẩu_trang",
+    "táo quân": "táo_quân",
+    "năm mới": "năm_mới",
+    "chúc mừng": "chúc_mừng",
+    "mừng năm mới": "mừng_năm_mới",
+    "năm nay": "năm_nay",
+    "năm sau": "năm_sau",
+    "hôm nay": "hôm_nay",
+    "hôm qua": "hôm_qua",
+    "bây giờ": "bây_giờ",
+    "lần đầu": "lần_đầu",
+    "cuối cùng": "cuối_cùng",
+    "ngày càng": "ngày_càng",
+    "nói chung": "nói_chung",
+    "thật sự": "thật_sự",
+    "rất thuyết phục": "rất_thuyết_phục",
+    "cực kỳ": "cực_kỳ",
+    "cực kì": "cực_kì",
+    "hợp lý": "hợp_lý",
+    "tuyệt vời": "tuyệt_vời",
+    "chắc chắn": "chắc_chắn",
+    "không biết": "không_biết",
+    "không phải": "không_phải",
+    "không cần": "không_cần",
+    "không có": "không_có",
+    "chỉ có": "chỉ_có",
+    "có vẻ": "có_vẻ",
+    "được rồi": "được_rồi",
+    "làm sao": "làm_sao",
+    "như thế": "như_thế",
+    "thế nào": "thế_nào",
+    "bao giờ": "bao_giờ",
+    "xin lỗi": "xin_lỗi",
+    "xin phép": "xin_phép",
+    "xin video": "xin_video",
+    "xin link": "xin_link",
+    "nghe nói": "nghe_nói",
+    "xem video": "xem_video",
+    "link video": "link_video",
+    "nhắn tin": "nhắn_tin",
+    "trả lời": "trả_lời",
+    "bình luận": "bình_luận",
+    "đăng ký": "đăng_ký",
+    "bình thường": "bình_thường",
+    "thời gian": "thời_gian",
+    "thành công": "thành_công",
+    "công nhận": "công_nhận",
+    "phát triển": "phát_triển",
+    "quảng cáo": "quảng_cáo",
+    "gia đình": "gia_đình",
+    "nước ngoài": "nước_ngoài",
+    "người dân": "người_dân",
+    "nhiều người": "nhiều_người",
+    "mấy thằng": "mấy_thằng",
+    "mấy đứa": "mấy_đứa",
+    "lãnh đạo": "lãnh_đạo",
+    "chính quyền": "chính_quyền",
+    "chương trình": "chương_trình",
+    "câu chuyện": "câu_chuyện",
+    "bản thân": "bản_thân",
+    "quan tâm": "quan_tâm",
+    "suy nghĩ": "suy_nghĩ",
+    "cẩn thận": "cẩn_thận",
+    "quan trọng": "quan_trọng",
+    "khẩu nghiệp": "khẩu_nghiệp",
+    "cộng đồng": "cộng_đồng",
+    "cộng sản": "cộng_sản",
+    "phản động": "phản_động",
+    "tham nhũng": "tham_nhũng",
+    "trẻ trâu": "trẻ_trâu",
+    "huyền thoại": "huyền_thoại",
+    "danh hài": "danh_hài",
+    "giải trí": "giải_trí",
+    "cuộc sống": "cuộc_sống",
+    "sức khỏe": "sức_khỏe",
+    "mùa dịch": "mùa_dịch",
+    "dịch bệnh": "dịch_bệnh",
+    "tình hình": "tình_hình",
+    "tương lai": "tương_lai",
+    "may mắn": "may_mắn",
+    "yên tâm": "yên_tâm",
+    "đạo đức": "đạo_đức",
+    "giao thông": "giao_thông",
+    "hình ảnh": "hình_ảnh",
+    "cảm giác": "cảm_giác",
+    "khả năng": "khả_năng",
+    "thần kinh": "thần_kinh",
+    "phong cách": "phong_cách",
+    "câu nói": "câu_nói",
+    "hợp tác": "hợp_tác",
+    "ngày xưa": "ngày_xưa",
+    "nước mắt": "nước_mắt",
+    "người việt": "người_việt",
+    "sài gòn": "sài_gòn",
+    "sân bay": "sân_bay",
+    "máy bay": "máy_bay",
+    "fan cứng": "fan_cứng",
+    "xạo lồn": "xạo_lồn",
+    "tấu hài": "tấu_hài",
+    "cánh hoa": "cánh_hoa",
+    "vàng ngọc": "vàng_ngọc",
+    "cao lãnh": "cao_lãnh",
+    "trung thu": "trung_thu",
+    "trả nợ": "trả_nợ",
+    "không gian": "không_gian",
+    "thể hiện": "thể_hiện",
+    "sản phẩm": "sản_phẩm",
+    "người khác": "người_khác",
+    "nói chuyện": "nói_chuyện",
+    "xin chào": "xin_chào",
+    "về việt nam": "về_việt_nam",
+    "trên mạng": "trên_mạng",
+    "chụp ảnh": "chụp_ảnh",
+    "làm việc": "làm_việc",
+    "đi học": "đi_học",
+    "đi làm": "đi_làm",
+    "đọc báo": "đọc_báo",
+    "xem phim": "xem_phim",
+    "chốt đơn": "chốt_đơn",
+    "like dạo": "like_dạo",
+    "bị chặn": "bị_chặn",
+    "bảo vệ": "bảo_vệ",
+    "kiểm soát": "kiểm_soát",
+    "thuyết phục": "thuyết_phục",
+    "hợp nhóm": "hợp_nhóm",
+    "công khai": "công_khai",
+    "bị phạt": "bị_phạt",
+    "quá hay": "quá_hay",
+    "quá đẹp": "quá_đẹp",
+    "quá tốt": "quá_tốt",
+    "bao nhiêu": "bao_nhiêu",
+    "xét nghiệm": "xét_nghiệm",
+    "văn hóa": "văn_hóa",
+    "văn hoá": "văn_hoá",
+    "đồng chí": "đồng_chí",
+    "nước hoa": "nước_hoa",
+    "chủ tịch": "chủ_tịch",
+    "kinh nghiệm": "kinh_nghiệm",
+    "nổi tiếng": "nổi_tiếng",
+    "thanh niên": "thanh_niên",
+    "phân biệt": "phân_biệt",
+    "đồng lòng": "đồng_lòng",
+    "bỏ phiếu": "bỏ_phiếu",
+    "bán hàng": "bán_hàng",
+    "chụp hình": "chụp_hình",
+    "việt nam": "việt_nam",
+    "đất nước": "đất_nước",
+    "virus corona": "virus_corona",
+    "covid 19": "covid_19"
+}
 # FIX 1 — Normalize tất cả key/value về NFC ngay khi khởi động
 # → Tránh miss-match nếu có key NFD lẫn vào khi chỉnh sửa file
 SLANG_DICT  = {
-    unicodedata.normalize('NFC', k): unicodedata.normalize('NFC', v)
+    unicodedata.normalize('NFC', k): unicodedata.normalize('NFC', v).replace(' ', '_')
     for k, v in _SLANG_DICT_RAW.items()
 }
 ABBREV_DICT = {
-    unicodedata.normalize('NFC', k): unicodedata.normalize('NFC', v)
+    unicodedata.normalize('NFC', k): unicodedata.normalize('NFC', v).replace(' ', '_')
     for k, v in _ABBREV_DICT_RAW.items()
 }
+COMPOUND_DICT = {
+    unicodedata.normalize('NFC', k): unicodedata.normalize('NFC', v).replace(' ', '_')
+    for k, v in _COMPOUND_DICT_RAW.items()
+}
+
+COMPOUND_PATTERNS = [
+    (
+        re.compile(
+            r'(?<!\w)' + r'\s+'.join(re.escape(part) for part in phrase.split()) + r'(?!\w)',
+            flags=re.IGNORECASE,
+        ),
+        replacement,
+    )
+    for phrase, replacement in sorted(COMPOUND_DICT.items(), key=lambda item: len(item[0].split()), reverse=True)
+]
 
 # ==========================================
 # STOPWORDS
@@ -245,20 +396,19 @@ ABBREV_DICT = {
 STOPWORDS = set([
     # Nhóm gốc
     "và", "là", "như", "thì", "mà", "nếu", "có", "các", "những", "của",
-    "cho", "đi", "này", "cái", "nó", "rồi", "lại", "ra", "hay", "còn",
+    "cho", "đi", "này", "cái", "nó", "rồi", "lại", "ra", "còn",
     "phải", "mình", "ơi", "nào", "thế", "sao", "ai", "ở", "đâu", "đó",
     "để", "thôi", "vậy", "với", "chỉ", "cả", "đã", "vào", "nên", "nữa",
     "từ", "khi", "đến", "trong", "vì", "cứ", "sau", "con", "gì", "rất",
-    "quá", "đang", "mới", "hơn", "luôn", "được", "không", "hoặc", "làm",
+    "quá", "đang", "mới", "hơn", "luôn", "được", "hoặc", "làm",
     "thấy", "bị", "nhé", "nha", "hả", "thật",
 
     # Nhóm bổ sung — động từ / phó từ trung tính (từ phân tích vocab)
-    "cũng",  "biết",  "muốn",  "nghe",  "nhìn",
-    "đúng",  "vẫn",   "chưa",  "nói",   "học",
-    "xem",   "cần",   "nhớ",   "nhiều", "chứ",
-    "lên",   "xuống", "vô",    "sẽ",    "đây",
+    "cũng",  "biết",  "muốn",
+    "đúng",  "vẫn",   "cần", "chứ",
+       "sẽ",    "đây",
     "đấy",   "lắm",   "hết",   "theo",  "nhau",
-    "vừa",   "thêm",  "một",   "cùng",  "tất",
+    "vừa",   "thêm",  "tất",
 ])
 
 # ==========================================
@@ -283,6 +433,74 @@ def remove_noise(text: str) -> str:
     return text
 
 
+def is_word_token(token: str) -> bool:
+    """Token chữ/số/underscore/hyphen để áp dụng từ điển chuẩn hóa."""
+    if not token:
+        return False
+    return all(ch.isalnum() or ch in {'_', '-'} for ch in token)
+
+
+def is_special_token(token: str) -> bool:
+    return token.startswith(SPECIAL_TOKEN_PREFIXES)
+
+
+def tokenize_keep_punctuation(text: str) -> list[str]:
+    """Tách token giữ dấu câu riêng để tránh miss-match kiểu 'ko?' hoặc 'đc.'"""
+    return LEXICON_TOKEN_PATTERN.findall(text)
+
+
+def apply_lexicon(tokens: list[str], lexicon: dict[str, str]) -> list[str]:
+    """Áp dụng map từ điển trên token chữ, bỏ qua token kỹ thuật (EMOJI_/PUNC_)."""
+    normalized_tokens = []
+    for token in tokens:
+        if is_word_token(token) and not is_special_token(token):
+            replacement = lexicon.get(token, token)
+            normalized_tokens.extend(replacement.split())
+        else:
+            normalized_tokens.append(token)
+    return normalized_tokens
+
+
+def replace_emoticons(text: str) -> str:
+    """Map emoticon ASCII sang tag cảm xúc trước khi xử lý dấu câu."""
+    def _repl(match: re.Match) -> str:
+        emoticon = match.group(0).lower()
+        return f" {EMOTICON_POLARITY.get(emoticon, 'EMOTICON_TRUNG_TINH')} "
+
+    return EMOTICON_PATTERN.sub(_repl, text)
+
+
+def separate_emoji_boundaries(text: str) -> str:
+    """Tách emoji thô khỏi chữ ở biên token trước khi gán nhãn emoji."""
+    emoji_spans = emoji.emoji_list(text)
+    if not emoji_spans:
+        return text
+
+    pieces = []
+    cursor = 0
+    for item in emoji_spans:
+        start = item["match_start"]
+        end = item["match_end"]
+        if start > cursor:
+            pieces.append(text[cursor:start])
+        pieces.append(f" {item['emoji']} ")
+        cursor = end
+
+    if cursor < len(text):
+        pieces.append(text[cursor:])
+
+    return ''.join(pieces)
+
+
+def emoji_to_fallback_tag(emoji_text: str) -> str:
+    """Fallback demojize thành token an toàn, không dùng dấu ':' để tránh vỡ token."""
+    alias = emoji.demojize(emoji_text, delimiters=("", ""))
+    alias = re.sub(r'[^0-9a-zA-Z_]+', '_', alias).strip('_')
+    if not alias:
+        return "EMOJI_KHAC"
+    return f"EMOJI_ALIAS_{alias.upper()}"
+
+
 def extract_emoji_features(text: str) -> str:
     """
     [FIX 4] Bước 4: Khai thác đặc trưng phân cực Emoji.
@@ -294,16 +512,35 @@ def extract_emoji_features(text: str) -> str:
         thay vì dùng tên tiếng Anh của demojize() (ít ngữ nghĩa hơn)
       - Emoji không có trong bảng → fallback về demojize()
     """
+    text = replace_emoticons(text)
+    text = separate_emoji_boundaries(text)
+
+    # Xử lý theo cụm emoji (grapheme) để không tách rời variation selector như '❤️'
+    emoji_spans = emoji.emoji_list(text)
+    if not emoji_spans:
+        return text
+
     result = []
-    for char in text:
-        if emoji.is_emoji(char):
-            tag = EMOJI_POLARITY.get(char)
-            if tag:
-                result.append(f' {tag} ')       # tag phân cực rõ ràng
-            else:
-                result.append(f' {emoji.demojize(char)} ')  # fallback
+    cursor = 0
+    for item in emoji_spans:
+        start = item["match_start"]
+        end = item["match_end"]
+        symbol = item["emoji"]
+
+        if start > cursor:
+            result.append(text[cursor:start])
+
+        tag = EMOJI_POLARITY.get(symbol)
+        if tag:
+            result.append(f" {tag} ")
         else:
-            result.append(char)
+            result.append(f" {emoji_to_fallback_tag(symbol)} ")
+
+        cursor = end
+
+    if cursor < len(text):
+        result.append(text[cursor:])
+
     return ''.join(result)
 
 
@@ -317,8 +554,20 @@ def normalize_lengthened_words(text: str) -> str:
       Lớp 2 (GIỮ): Chữ cái tiếng Việt lặp lại
                    gìiiii → gì   buồnnnn → buồn
     """
-    # Lớp 1: cắt dấu câu lặp (≥ 2 lần) về còn 1
-    text = re.sub(r'([!?,.:;\)\(\]\[><~\-=])\1+', r'\1', text)
+    def _punct_with_intensity(symbol: str, tag_prefix: str):
+        def _repl(match: re.Match) -> str:
+            level = min(len(match.group(0)), 3)
+            return f" {symbol} {tag_prefix}_{level} "
+
+        return _repl
+
+    # Lớp 1a: Giữ tín hiệu cảm xúc của dấu câu lặp bằng intensity tag
+    text = re.sub(r'\.{3,}', _punct_with_intensity('…', 'PUNC_ELLIPSIS'), text)
+    text = re.sub(r'!{2,}', _punct_with_intensity('!', 'PUNC_EXCLAM'), text)
+    text = re.sub(r'\?{2,}', _punct_with_intensity('?', 'PUNC_QUESTION'), text)
+
+    # Lớp 1b: Các dấu câu lặp khác thu gọn còn 1 ký tự
+    text = re.sub(r'([,;:\)\(\]\[><~\-=])\1+', r' \1 ', text)
 
     # Lớp 2: cắt chữ cái (Latin + tiếng Việt có dấu) lặp ≥ 3 lần về còn 1
     text = re.sub(
@@ -338,12 +587,19 @@ def replace_slang_and_abbreviations(text: str) -> str:
       Lý do: viết tắt thường là prefix của từ lóng (vd: "dc" → "được",
       không nhầm với "dcm" → "địt cụ mày" vì "dcm" khớp exact match)
     """
-    words = text.split()
+    words = tokenize_keep_punctuation(text)
     # Áp dụng ABBREV_DICT trước
-    words = [ABBREV_DICT.get(w, w) for w in words]
-    # Áp dụng SLANG_DICT sau (cần re-split vì value có thể là cụm từ)
-    words = [SLANG_DICT.get(w, w) for w in ' '.join(words).split()]
+    words = apply_lexicon(words, ABBREV_DICT)
+    # Áp dụng SLANG_DICT sau
+    words = apply_lexicon(words, SLANG_DICT)
     return ' '.join(words)
+
+
+def replace_compound_words(text: str) -> str:
+    """Gộp các cụm từ ghép phổ biến thành một token có dấu underscore."""
+    for pattern, replacement in COMPOUND_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 def segment_and_remove_stopwords(text: str) -> str:
@@ -355,8 +611,42 @@ def segment_and_remove_stopwords(text: str) -> str:
         words = tokenized_text.split()
     # words = tokenized_text.split()
 
-    filtered = [w for w in words if w.lower() not in STOPWORDS]
+    filtered = [
+        w for w in words
+        if not (
+            w.lower() in STOPWORDS
+            and w.lower() not in NEGATION_KEEP_TOKENS
+            and not is_special_token(w)
+        )
+    ]
     return ' '.join(filtered)
+
+
+def run_quick_regression_checks() -> None:
+    """Self-test nhanh cho các ca social text dễ tách sai."""
+    samples = [
+        "Ko??? dcm!!!",
+        "Được anh ưi :)))",
+        "Cắt cho trẻ trâu bớt thui mà 😂😂😂",
+        "Thế đấy. làm j bọn nó :v",
+        "đừng chửi nữa!!!",
+        "Mọi người đừng quên chúc mừng năm mới",
+    ]
+
+    print("\n--- SELF TEST: QUICK REGRESSION SAMPLES ---")
+    for idx, sample in enumerate(samples, start=1):
+        text = unicode_normalization(sample)
+        text = text.lower()
+        text = remove_noise(text)
+        text = extract_emoji_features(text)
+        text = normalize_lengthened_words(text)
+        text = replace_slang_and_abbreviations(text)
+        text = replace_compound_words(text)
+        text = segment_and_remove_stopwords(text)
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        print(f"[{idx}] IN : {sample}")
+        print(f"    OUT: {text}")
 
 
 # ==========================================
@@ -368,13 +658,13 @@ def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
     print("  [1/7] Đồng nhất bảng mã Unicode NFC (fix NFD/mixed)...")
     df['clean_text'] = df[text_column].apply(unicode_normalization)
 
-    # print("  [2/7] Chuyển về chữ thường...")
-    # df['clean_text'] = df['clean_text'].str.lower()
+    print("  [2/7] Chuyển về chữ thường...")
+    df['clean_text'] = df['clean_text'].str.lower()
 
     print("  [3/7] Lọc nhiễu kỹ thuật (URL, @mention, #hashtag)...")
     df['clean_text'] = df['clean_text'].apply(remove_noise)
 
-    print("  [4/7] Trích xuất đặc trưng phân cực Emoji (có khoảng trắng + tag cực)...")
+    print("  [4/7] Trích xuất đặc trưng Emoji (demojize tiếng Anh + khoảng trắng)...")
     df['clean_text'] = df['clean_text'].apply(extract_emoji_features)
 
     print("  [5/7] Chuẩn hóa ký tự kéo dài (dấu câu + chữ cái)...")
@@ -383,7 +673,10 @@ def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
     print("  [6/7] Chuẩn hóa Teencode: ABBREV_DICT → SLANG_DICT...")
     df['clean_text'] = df['clean_text'].apply(replace_slang_and_abbreviations)
 
-    print("  [7/7] Phân đoạn từ + Loại bỏ Stopwords (mất chút thời gian)...")
+    print("  [7/8] Gộp từ ghép phổ biến thành token underscore...")
+    df['clean_text'] = df['clean_text'].apply(replace_compound_words)
+
+    print("  [8/8] Phân đoạn từ + Loại bỏ Stopwords (mất chút thời gian)...")
     df['clean_text'] = df['clean_text'].apply(segment_and_remove_stopwords)
 
     print("  [*] Dọn khoảng trắng thừa...")
@@ -446,5 +739,14 @@ if __name__ == "__main__":
         help='Đường dẫn thư mục dataset (mặc định: ../dataset-vihsd)',
         default=None
     )
+    parser.add_argument(
+        '--self_test',
+        action='store_true',
+        help='Chạy nhanh một bộ regression sample trước khi xử lý dataset'
+    )
     args = parser.parse_args()
+
+    if args.self_test:
+        run_quick_regression_checks()
+
     process_dataset(args.dataset_dir)

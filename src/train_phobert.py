@@ -14,6 +14,7 @@ from sklearn.metrics import confusion_matrix, accuracy_score, f1_score
 from transformers import (
     AutoTokenizer,
     AutoModel,
+    PreTrainedTokenizerFast,
     get_linear_schedule_with_warmup,
 )
 from transformers.modeling_outputs import SequenceClassifierOutput
@@ -149,9 +150,16 @@ class TransformerWithMetaFeatures(nn.Module):
             encoder_inputs["token_type_ids"] = token_type_ids
 
         outputs = self.encoder(**encoder_inputs)
-        pooled_output = outputs.pooler_output
-        if pooled_output is None:
-            pooled_output = outputs.last_hidden_state[:, 0, :]
+        # Always take the raw [CLS] token embedding from the last hidden state
+        # instead of the encoder's own pooler_output. RoBERTa-family models
+        # (BamiBERT, PhoBERT) are pre-trained without a next-sentence-prediction
+        # objective, so their pooler weights are either absent from the released
+        # checkpoint or never actually trained (randomly initialized). Using the
+        # raw CLS embedding avoids depending on that untrained layer and matches
+        # HuggingFace's own RobertaForSequenceClassification behavior. It also
+        # keeps pooling consistent across all encoders used in this script,
+        # including DistilBERT (which has no pooler_output at all).
+        pooled_output = outputs.last_hidden_state[:, 0, :]
 
         text_repr = self.text_dropout(pooled_output)
         if meta_features is None:
@@ -321,9 +329,18 @@ def run_experiment(default_model_name: str, default_output_subdir: str, run_name
     test_labels = encode_labels(test_labels_raw, label2id)
     debug(f"Label mapping: {label2id}")
 
-    use_fast = False if "phobert" in args.model_name.lower() else True
-    debug(f"Loading tokenizer: {args.model_name} (use_fast={use_fast})")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=use_fast)
+    if "bamibert" in args.model_name.lower():
+        # BamiBERT's tokenizer_config.json incorrectly declares tokenizer_class
+        # as XLMRobertaTokenizer (SentencePiece-based), but the repo actually
+        # ships a byte-level BPE tokenizer.json (extended from PhoGPT's
+        # tokenizer). Loading via AutoTokenizer dispatches to the wrong class
+        # and crashes, so load the fast tokenizer file directly instead.
+        debug(f"Loading tokenizer: {args.model_name} (PreTrainedTokenizerFast, bypassing AutoTokenizer)")
+        tokenizer = PreTrainedTokenizerFast.from_pretrained(args.model_name)
+    else:
+        use_fast = False if "phobert" in args.model_name.lower() else True
+        debug(f"Loading tokenizer: {args.model_name} (use_fast={use_fast})")
+        tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=use_fast)
 
     debug("Building tokenized datasets")
     train_ds = TransformerDataset(train_texts, train_meta, train_labels, tokenizer, args.max_len)
