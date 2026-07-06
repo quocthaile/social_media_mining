@@ -26,3 +26,5 @@ Thumbs.db
 
 #FastText
 cc.vi.300.vec
+
+*.pt

@@ -22,6 +22,9 @@ DEFAULT_FEATURE_COLUMNS = [
     "feat_punct_density",
     "feat_upper_ratio",
     "feat_digit_ratio",
+    "feat_bad_word_density",      # <--- BỔ SUNG: Rất quan trọng cho nhãn OFFENSIVE/HATE
+    "feat_exclamation_density",  # <--- BỔ SUNG: Biểu thị sắc thái kích động
+    "feat_allcaps_ratio"            # <--- BỔ SUNG: Biểu thị la hét/chửi bới
 ]
 
 
@@ -113,7 +116,7 @@ def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
     return vocab
 
 
-def load_fasttext_vectors(vec_path: str):
+def load_fasttext_vectors(vec_path: str, vocab=None):
     """Tải file FastText (.vec) vào bộ nhớ dưới dạng dictionary."""
     debug(f"Đang tải FastText vectors từ {vec_path} (Quá trình này có thể mất vài phút)...")
     embeddings_dict = {}
@@ -126,6 +129,10 @@ def load_fasttext_vectors(vec_path: str):
             values = line.rstrip().split(" ")
             word = values[0]
             word_lower = word.lower()
+
+            if vocab is not None and word_lower not in vocab:
+                continue
+
             vector = np.asarray(values[1:], dtype="float32")
             embeddings_dict[word_lower] = vector
 
@@ -143,10 +150,11 @@ def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
     if embed_dim is None:
         embed_dim = fasttext_dim
     elif embed_dim != fasttext_dim:
-        raise ValueError(
+        debug(
             f"embed_dim mismatch: embed_dim={embed_dim}, FastText dim={fasttext_dim}. "
-            "Hãy đặt --embed_dim bằng đúng số chiều của FastText hoặc để script tự đồng bộ."
+            f"Tự động đồng bộ embed_dim -> {fasttext_dim}."
         )
+        embed_dim = fasttext_dim
 
     vocab_size = len(vocab)
     embedding_matrix = np.random.normal(scale=0.1, size=(vocab_size, embed_dim))
@@ -295,7 +303,22 @@ def evaluate(model, loader, criterion, device):
         logits = model(x, meta)
         loss = criterion(logits, y)
 
-        preds = torch.argmax(logits, dim=1)
+        # preds = torch.argmax(logits, dim=1)
+        # BỔ SUNG THRESHOLD MOVING
+        probs = torch.softmax(logits, dim=1)
+        preds = []
+        for p in probs:
+            # p[0] là Sạch, p[1] là Xúc phạm, p[2] là Thù địch
+            # Nếu xác suất Thù địch > 0.25 -> Chọn Thù địch (không cần đợi tới > 0.33)
+            if p[2] > 0.25:
+                preds.append(2)
+            # Nếu xác suất Xúc phạm > 0.25 -> Chọn Xúc phạm
+            elif p[1] > 0.25:
+                preds.append(1)
+            else:
+                preds.append(torch.argmax(p).item()) # Quay về argmax nếu ko đạt ngưỡng
+                
+        preds = torch.tensor(preds)
         total_loss += loss.item() * x.size(0)
         y_true.extend(y.cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
@@ -448,6 +471,31 @@ def main():
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
+    # === BỔ SUNG KỸ THUẬT OVERSAMPLING CHO TẬP TRAIN ===
+    debug("Thực hiện Oversampling (Nhân bản dữ liệu) để cân bằng nhãn...")
+    
+    # Tách dữ liệu theo nhãn
+    clean_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 0]     # Nhãn 0 (Đa số)
+    offensive_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 1] # Nhãn 1 (Thiểu số)
+    hate_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 2]      # Nhãn 2 (Thiểu số)
+    
+    # Tính số lần cần nhân bản để cân bằng tương đối (không cần bằng 100%, chỉ cần xấp xỉ 50-70%)
+    # Ví dụ: Nhân bản OFFENSIVE lên 5 lần, HATE lên 3 lần
+    import random
+    augmented_indices = clean_indices.copy()
+    augmented_indices.extend(offensive_indices * 5) # Nhân 5 lần dữ liệu Offensive
+    augmented_indices.extend(hate_indices * 3)      # Nhân 3 lần dữ liệu Hate
+    
+    # Xáo trộn lại tập dữ liệu
+    random.shuffle(augmented_indices)
+    
+    # Áp dụng lại vào mảng train
+    train_texts = [train_texts[i] for i in augmented_indices]
+    train_meta = np.array([train_meta[i] for i in augmented_indices])
+    train_labels_raw = [train_labels_raw[i] for i in augmented_indices]
+    
+    debug(f"Kích thước tập Train sau Oversampling: {len(train_texts)} mẫu.")
+    # ===================================================
     dev_texts, dev_meta, dev_labels_raw = load_split(
         os.path.join(args.data_dir, args.dev_file),
         text_column=args.text_column,
@@ -481,7 +529,9 @@ def main():
             fasttext_path = candidate_fasttext_path
 
     if os.path.exists(fasttext_path):
-        fasttext_dict = load_fasttext_vectors(fasttext_path)
+        # fasttext_dict = load_fasttext_vectors(fasttext_path)
+        fasttext_dict = load_fasttext_vectors(fasttext_path, vocab)
+        pretrained_embeddings = build_embedding_matrix(vocab, fasttext_dict, embed_dim=args.embed_dim)
         fasttext_dim = len(next(iter(fasttext_dict.values())))
         if args.embed_dim != fasttext_dim:
             debug(
@@ -489,7 +539,6 @@ def main():
                 f"Tự động đồng bộ embed_dim -> {fasttext_dim}."
             )
             args.embed_dim = fasttext_dim
-        pretrained_embeddings = build_embedding_matrix(vocab, fasttext_dict, embed_dim=args.embed_dim)
     else:
         print(f"[CẢNH BÁO] Không tìm thấy file {fasttext_path}. Mô hình sẽ khởi tạo nhúng ngẫu nhiên!")
 
@@ -540,6 +589,13 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
+
+    # BỔ SUNG SCHEDULER: Giảm LR đi một nửa (factor=0.5) nếu dev_f1 không tăng sau 2 epoch
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.5, patience=2
+    )
+
+    # ----------------------------------------------------------
     debug("Optimizer and criterion initialized")
 
     best_dev_f1 = -1.0
@@ -570,6 +626,8 @@ def main():
             if no_improve >= args.patience:
                 print(f"Early stopping at epoch {epoch} (patience={args.patience}).")
                 break
+        # Cập nhật Scheduler
+        scheduler.step(dev_f1)
 
     if best_state is not None:
         debug("Loading best checkpoint from training")
@@ -607,7 +665,6 @@ def main():
     )
     print(f"\nSaved best model to: {save_path}")
     debug("Script finished successfully")
-
 
 if __name__ == "__main__":
     main()

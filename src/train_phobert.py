@@ -288,6 +288,9 @@ def run_experiment(
     
     # SỬA TẠI ĐÂY: Trỏ biến default vào tham số mới truyền vào
     parser.add_argument("--text_column", type=str, default=default_text_column) 
+    # === BỔ SUNG DÒNG NÀY ĐỂ VÁ LỖI ATTRIBUTEERROR ===
+    parser.add_argument("--model_name", type=str, default=default_model_name, help="Tên hoặc đường dẫn mô hình Transformer")
+    # =================================================
     
     parser.add_argument("--feature_columns", type=str, default=",".join(DEFAULT_FEATURE_COLUMNS))
     parser.add_argument("--max_len", type=int, default=128)
