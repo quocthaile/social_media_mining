@@ -23,11 +23,13 @@ DEFAULT_FEATURE_COLUMNS = [
     "feat_punct_density",
     "feat_upper_ratio",
     "feat_digit_ratio",
-    "feat_bad_word_density",      # <--- BỔ SUNG: Rất quan trọng cho nhãn OFFENSIVE/HATE
-    "feat_exclamation_density",  # <--- BỔ SUNG: Biểu thị sắc thái kích động
-    "feat_allcaps_ratio"            # <--- BỔ SUNG: Biểu thị la hét/chửi bới
+    "feat_bad_word_density",      
+    "feat_exclamation_density",  
+    "feat_allcaps_ratio", 
+    "feat_laugh_density",          # <--- ĐÃ THÊM
+    "feat_sarcasm_words",          # <--- ĐÃ THÊM
+    "feat_contrast_score"          # <--- ĐÃ THÊM (CHÌA KHÓA BẮT MỈA MAI)
 ]
-
 
 def debug(msg: str) -> None:
     print(f"[DEBUG][TextCNN] {msg}")
@@ -356,6 +358,84 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
     print(f"\nAccuracy: {acc:.4f}")
     print(f"F1-macro: {f1_macro:.4f}")
 
+def print_confusion_and_scores(y_true, y_pred, id2label):
+    label_ids = list(range(len(id2label)))
+    cm = confusion_matrix(y_true, y_pred, labels=label_ids)
+
+    cm_df = pd.DataFrame(
+        cm,
+        index=[f"Origin_{id2label[i]}" for i in label_ids],
+        columns=[f"Prediction_{id2label[i]}" for i in label_ids],
+    )
+
+    print("\n=== Confusion Matrix (Origin rows x Prediction columns) ===")
+    print(cm_df.to_string())
+
+    total = cm.sum()
+    rows = []
+    for i in label_ids:
+        tp = int(cm[i, i])
+        fn = int(cm[i, :].sum() - tp)
+        fp = int(cm[:, i].sum() - tp)
+        tn = int(total - tp - fn - fp)
+        rows.append(
+            {
+                "Class": id2label[i],
+                "TN": tn,
+                "TP": tp,
+                "FN": fn,
+                "FP": fp,
+            }
+        )
+
+    print("\n=== One-vs-Rest Table (TN TP FN FP) ===")
+    ovr_df = pd.DataFrame(rows)
+    print(ovr_df.to_string(index=False))
+
+    acc = accuracy_score(y_true, y_pred)
+    f1_macro = f1_score(y_true, y_pred, average="macro")
+    print(f"\nAccuracy: {acc:.4f}")
+    print(f"F1-macro: {f1_macro:.4f}")
+    
+    # SỬA TẠI ĐÂY: Phải return các biến này để hàm export nhận được
+    return cm_df, ovr_df, acc, f1_macro
+
+
+def save_evaluation_artifacts(
+    output_dir,
+    split_df,
+    y_true,
+    y_pred,
+    id2label,
+    confusion_matrix_file,
+    ovr_metrics_file,
+    misclassified_file,
+):
+    if len(split_df) != len(y_true) or len(split_df) != len(y_pred):
+        raise ValueError("Prediction length does not match split dataframe length")
+
+    cm_df, ovr_df, acc, f1_macro = print_confusion_and_scores(y_true, y_pred, id2label)
+
+    os.makedirs(output_dir, exist_ok=True)
+    cm_path = os.path.join(output_dir, confusion_matrix_file)
+    ovr_path = os.path.join(output_dir, ovr_metrics_file)
+    mis_path = os.path.join(output_dir, misclassified_file)
+
+    cm_df.to_csv(cm_path, encoding="utf-8-sig")
+    ovr_df.to_csv(ovr_path, index=False, encoding="utf-8-sig")
+
+    eval_df = split_df.reset_index(drop=True).copy()
+    eval_df["label_id_true"] = [id2label[i] for i in y_true]
+    eval_df["label_id_pred"] = [id2label[i] for i in y_pred]
+    eval_df["is_misclassified"] = eval_df["label_id_true"] != eval_df["label_id_pred"]
+
+    mis_df = eval_df[eval_df["is_misclassified"]].copy()
+    mis_df.to_csv(mis_path, index=False, encoding="utf-8-sig")
+
+    debug(f"Exported confusion matrix to: {cm_path}")
+    debug(f"Exported one-vs-rest table to: {ovr_path}")
+    debug(f"Exported misclassified rows to: {mis_path} (rows={len(mis_df)})")
+    debug(f"Final test metrics | accuracy={acc:.4f}, f1_macro={f1_macro:.4f}")
 
 def parse_kernel_sizes(s: str):
     return tuple(int(x.strip()) for x in s.split(",") if x.strip())
@@ -404,6 +484,9 @@ def parse_args():
         type=str,
         default=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "textcnn")),
     )
+    parser.add_argument("--confusion_matrix_file", type=str, default="confusion_matrix_test.csv")
+    parser.add_argument("--ovr_metrics_file", type=str, default="ovr_metrics_test.csv")
+    parser.add_argument("--misclassified_file", type=str, default="misclassified_test.csv")
     return parser.parse_args()
 
 
@@ -457,6 +540,7 @@ def main():
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
+    test_df = pd.read_csv(os.path.join(args.data_dir, args.test_file), encoding="utf-8-sig")
     debug(f"Kích thước tập test : {len(test_texts)} mẫu.")
     debug(
         f"Loaded rows | train={len(train_texts)}, dev={len(dev_texts)}, test={len(test_texts)}"
@@ -582,7 +666,17 @@ def main():
     _, test_true, test_pred = evaluate(model, test_loader, criterion, device)
 
     print("\n===== TextCNN Test Metrics =====")
-    print_confusion_and_scores(test_true, test_pred, id2label)
+    # print_confusion_and_scores(test_true, test_pred, id2label)
+    save_evaluation_artifacts(
+        output_dir=args.output_dir,
+        split_df=test_df,
+        y_true=test_true,
+        y_pred=test_pred,
+        id2label=id2label,
+        confusion_matrix_file=args.confusion_matrix_file,
+        ovr_metrics_file=args.ovr_metrics_file,
+        misclassified_file=args.misclassified_file,
+    )
 
     os.makedirs(args.output_dir, exist_ok=True)
     save_path = os.path.join(args.output_dir, "best_textcnn.pt")

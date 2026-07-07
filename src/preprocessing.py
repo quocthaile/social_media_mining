@@ -107,6 +107,21 @@ _SLANG_DICT_RAW = {
     "khong":   "không",
     "khongg":  "không",
     "khonggg": "không",
+    # Bổ sung: Lóng chửi bới / Teencode ẩn dụ
+    "coin_card": "con_cặc",
+    "concard": "con_cặc",
+    "cái_lồn_què": "cái_lồn",
+    
+    # Bổ sung: Từ vựng mỉa mai Gen Z
+    "cảm_lạnh": "tồi_tệ",
+    "báo": "phá_hoại",
+    "xu_cà_na": "xui_xẻo",
+    "chằm_zn": "trầm_cảm",
+    "luật_hoa_quả": "luật_nhân_quả",
+    "ô_dề": "lố_lăng",
+    "bất_ổn": "bất_ổn",
+    "thăm_ngàn": "làm_việc_khổ_sai",
+    "ra_chuồng_gà": "tệ_hại",
 }
 
 # ==========================================

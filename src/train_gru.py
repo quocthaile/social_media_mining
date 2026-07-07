@@ -22,9 +22,12 @@ DEFAULT_FEATURE_COLUMNS = [
     "feat_punct_density",
     "feat_upper_ratio",
     "feat_digit_ratio",
-    "feat_bad_word_density",      # <--- BỔ SUNG: Rất quan trọng cho nhãn OFFENSIVE/HATE
-    "feat_exclamation_density",  # <--- BỔ SUNG: Biểu thị sắc thái kích động
-    "feat_allcaps_ratio"            # <--- BỔ SUNG: Biểu thị la hét/chửi bới
+    "feat_bad_word_density",      
+    "feat_exclamation_density",  
+    "feat_allcaps_ratio", 
+    "feat_laugh_density",          # <--- ĐÃ THÊM
+    "feat_sarcasm_words",          # <--- ĐÃ THÊM
+    "feat_contrast_score"          # <--- ĐÃ THÊM (CHÌA KHÓA BẮT MỈA MAI)
 ]
 
 
