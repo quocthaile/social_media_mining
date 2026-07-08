@@ -8,7 +8,7 @@ import pandas as pd
 DEFAULT_INPUT_PREFIX = "preprocessed"
 DEFAULT_OUTPUT_PREFIX = "features"
 
-# BỔ SUNG 3 ĐẶC TRƯNG MỚI VÀO PIPELINE
+# CẬP NHẬT: THAY THẾ 2 ĐẶC TRƯNG CŨ BẰNG ĐẶC TRƯNG ĐẠI TỪ
 FEATURE_COLUMNS = [
     "feat_log_num_tokens",
     "feat_log_num_chars",
@@ -22,8 +22,7 @@ FEATURE_COLUMNS = [
     "feat_exclamation_density",
     "feat_allcaps_ratio",
     "feat_laugh_density",         # Tín hiệu cười cợt mỉa mai
-    "feat_sarcasm_words",         # Tín hiệu khen ngợi giả tạo
-    "feat_contrast_score",        # Mức độ tương phản ngữ nghĩa (Chìa khóa bắt Mỉa mai)
+    "feat_aggressive_pronoun",    # ĐẶC TRƯNG MỚI: Đại từ công kích
 ]
 
 EMOJI_TAG_PATTERN = re.compile(r"\bEMOJI_[A-Z_]+\b")
@@ -40,14 +39,14 @@ BAD_WORDS_LIST = [
     "nghiệt súc", "súc vật", "rác rưởi", "đáp cứt", "ngu học"
 ]
 
-POSITIVE_SARCASTIC_LIST = [
-    "tuyệt vời", "giỏi", "đỉnh", "hay quá", "xuất sắc", "thông minh",
-    "khen", "hoan hô", "tuyệt", "hảo", "nhất bạn", "số 1", "thiên tài",
-    "đáng tuyên dương", "hảo hán", "đỉnh cao", "xuất chúng", "tốt đẹp"
+# ĐẶC TRƯNG MỚI: DANH SÁCH ĐẠI TỪ CÔNG KÍCH / CHIA PHE PHÁI
+AGGRESSIVE_PRONOUNS_LIST = [
+    "mày", "tao", "chúng mày", "tụi mày", "bọn mày", "chúng nó", "tụi nó",
+    "bọn", "lũ", "thằng", "con", "nó"
 ]
 
 BAD_WORDS_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, BAD_WORDS_LIST)) + r')\b', re.IGNORECASE)
-POSITIVE_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, POSITIVE_SARCASTIC_LIST)) + r')\b', re.IGNORECASE)
+AGGRESSIVE_PRONOUN_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, AGGRESSIVE_PRONOUNS_LIST)) + r')\b', re.IGNORECASE)
 
 def debug(msg: str) -> None:
     print(f"[DEBUG][FeatureBuilder] {msg}")
@@ -69,18 +68,14 @@ def count_bad_words(text: str) -> int:
     clean_text = text.replace('_', ' ').lower()
     return len(BAD_WORDS_PATTERN.findall(clean_text))
 
-def count_positive_words(text: str) -> int:
+def count_aggressive_pronouns(text: str) -> int:
     clean_text = text.replace('_', ' ').lower()
-    return len(POSITIVE_PATTERN.findall(clean_text))
+    return len(AGGRESSIVE_PRONOUN_PATTERN.findall(clean_text))
 
 def count_laugh_signals(text: str) -> int:
-    # Bắt chữ haha, hehe, kkk
     text_laugh = len(re.findall(r'(haha+|hehe+|hihi+|kkk+|hé hé|hô hô|há há)', text.lower()))
-    # Bắt emoji cười cợt (Face with tears of joy, smirking, rofl)
     emoji_laugh = len(re.findall(r'(TEARS_OF_JOY|ROLLING_ON_THE_FLOOR|GRINNING_SQUINTING|SMIRKING)', text.upper()))
-    # Bắt dấu ngoặc đóng lặp lại (Biểu tượng =))) hoặc :))) rất phổ biến ở VN)
     paren_laugh = len(re.findall(r'(\={1,}\)+|\:{1,}\)+)', text))
-    
     return text_laugh + emoji_laugh + paren_laugh
 
 def count_elongated_words(text: str) -> int:
@@ -111,13 +106,8 @@ def extract_feature_row(text: str) -> dict:
     exclamation_count = count_exclamation_question(text)
     allcaps_count = count_all_caps_words(text)
     
-    pos_word_count = count_positive_words(text)
     laugh_count = count_laugh_signals(text)
-    
-    # HÀM TƯƠNG PHẢN (CHÌA KHÓA BẮT MỈA MAI)
-    # Nếu câu vừa có Khen vừa có Chửi -> Sarcasm Score = 1, 2...
-    # Nếu câu vừa có Khen vừa Cười cợt -> Sarcasm Score = 1, 2...
-    contrast_score = min(pos_word_count, bad_word_count) + min(pos_word_count, laugh_count)
+    agg_pronoun_count = count_aggressive_pronouns(text)
 
     return {
         "feat_log_num_tokens": float(np.log1p(num_tokens)),
@@ -131,10 +121,8 @@ def extract_feature_row(text: str) -> dict:
         "feat_elongated_ratio": float(elongated_count / max(num_tokens, 1)),
         "feat_exclamation_density": float(exclamation_count / max(num_chars, 1)),
         "feat_allcaps_ratio": float(allcaps_count / max(num_tokens, 1)),
-        # 3 Đặc trưng mới
         "feat_laugh_density": float(laugh_count / max(num_tokens, 1)),
-        "feat_sarcasm_words": float(pos_word_count / max(num_tokens, 1)),
-        "feat_contrast_score": float(contrast_score),
+        "feat_aggressive_pronoun": float(agg_pronoun_count / max(num_tokens, 1)),
     }
 
 def build_one_split(input_path: str, output_path: str) -> None:

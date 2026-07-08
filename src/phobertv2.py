@@ -20,7 +20,8 @@ from transformers import (
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 
-DEFAULT_TEXT_COLUMN = "transformer_text"
+# XÓA BỎ DEFAULT_TEXT_COLUMN DƯ THỪA Ở ĐÂY GÂY HIỂU NHẦM
+
 FEATURE_COLUMNS = [
     "feat_log_num_tokens",
     "feat_log_num_chars",
@@ -128,7 +129,7 @@ class TransformerWithMetaFeatures(nn.Module):
 
         self.text_dropout = nn.Dropout(dropout)
         self.meta_proj = nn.Sequential(
-            nn.LayerNorm(num_meta_features),
+            nn.BatchNorm1d(num_meta_features), # Đồng bộ BatchNorm1d giống CNN/GRU
             nn.Linear(num_meta_features, feature_hidden_size),
             nn.GELU(),
             nn.Dropout(dropout),
@@ -157,15 +158,7 @@ class TransformerWithMetaFeatures(nn.Module):
             encoder_inputs["token_type_ids"] = token_type_ids
 
         outputs = self.encoder(**encoder_inputs)
-        # Always take the raw [CLS] token embedding from the last hidden state
-        # instead of the encoder's own pooler_output. RoBERTa-family models
-        # (BamiBERT, PhoBERT) are pre-trained without a next-sentence-prediction
-        # objective, so their pooler weights are either absent from the released
-        # checkpoint or never actually trained (randomly initialized). Using the
-        # raw CLS embedding avoids depending on that untrained layer and matches
-        # HuggingFace's own RobertaForSequenceClassification behavior. It also
-        # keeps pooling consistent across all encoders used in this script,
-        # including DistilBERT (which has no pooler_output at all).
+        
         pooled_output = outputs.last_hidden_state[:, 0, :]
 
         text_repr = self.text_dropout(pooled_output)
@@ -223,7 +216,18 @@ def evaluate(model, loader, device):
 
         loss = outputs.loss
         logits = outputs.logits
-        preds = torch.argmax(logits, dim=1)
+        
+        # BỔ SUNG: THRESHOLD MOVING DÀNH CHO TRANSFORMER
+        probs = torch.softmax(logits, dim=1)
+        batch_preds = []
+        for p in probs:
+            if p[2] > 0.25:
+                batch_preds.append(2)
+            elif p[1] > 0.25:
+                batch_preds.append(1)
+            else:
+                batch_preds.append(torch.argmax(p).item())
+        preds = torch.tensor(batch_preds)
 
         total_loss += loss.item() * batch["labels"].size(0)
         y_true.extend(batch["labels"].cpu().tolist())
@@ -234,6 +238,7 @@ def evaluate(model, loader, device):
     return total_loss / len(loader.dataset), y_true, y_pred
 
 
+# BỔ SUNG: MODULE XUẤT CSV TƯƠNG TỰ TEXTCNN/GRU
 def print_confusion_and_scores(y_true, y_pred, id2label):
     label_ids = list(range(len(id2label)))
     cm = confusion_matrix(y_true, y_pred, labels=label_ids)
@@ -265,12 +270,52 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
         )
 
     print("\n=== One-vs-Rest Table (TN TP FN FP) ===")
-    print(pd.DataFrame(rows).to_string(index=False))
+    ovr_df = pd.DataFrame(rows)
+    print(ovr_df.to_string(index=False))
 
     acc = accuracy_score(y_true, y_pred)
     f1_macro = f1_score(y_true, y_pred, average="macro")
     print(f"\nAccuracy: {acc:.4f}")
     print(f"F1-macro: {f1_macro:.4f}")
+    
+    return cm_df, ovr_df, acc, f1_macro
+
+
+def save_evaluation_artifacts(
+    output_dir,
+    split_df,
+    y_true,
+    y_pred,
+    id2label,
+    confusion_matrix_file,
+    ovr_metrics_file,
+    misclassified_file,
+):
+    if len(split_df) != len(y_true) or len(split_df) != len(y_pred):
+        raise ValueError("Prediction length does not match split dataframe length")
+
+    cm_df, ovr_df, acc, f1_macro = print_confusion_and_scores(y_true, y_pred, id2label)
+
+    os.makedirs(output_dir, exist_ok=True)
+    cm_path = os.path.join(output_dir, confusion_matrix_file)
+    ovr_path = os.path.join(output_dir, ovr_metrics_file)
+    mis_path = os.path.join(output_dir, misclassified_file)
+
+    cm_df.to_csv(cm_path, encoding="utf-8-sig")
+    ovr_df.to_csv(ovr_path, index=False, encoding="utf-8-sig")
+
+    eval_df = split_df.reset_index(drop=True).copy()
+    eval_df["label_id_true"] = [id2label[i] for i in y_true]
+    eval_df["label_id_pred"] = [id2label[i] for i in y_pred]
+    eval_df["is_misclassified"] = eval_df["label_id_true"] != eval_df["label_id_pred"]
+
+    mis_df = eval_df[eval_df["is_misclassified"]].copy()
+    mis_df.to_csv(mis_path, index=False, encoding="utf-8-sig")
+
+    debug(f"Exported confusion matrix to: {cm_path}")
+    debug(f"Exported one-vs-rest table to: {ovr_path}")
+    debug(f"Exported misclassified rows to: {mis_path} (rows={len(mis_df)})")
+    debug(f"Final test metrics | accuracy={acc:.4f}, f1_macro={f1_macro:.4f}")
 
 
 def parse_feature_columns(raw: str):
@@ -280,12 +325,11 @@ def parse_feature_columns(raw: str):
     return columns
 
 
-# THÊM tham số default_text_column="tokens_text" vào hàm
 def run_experiment(
     default_model_name="vinai/phobert-base",
     default_output_subdir="phobert",
     run_name="PhoBERT",
-    default_text_column="tokens_text"  # <--- SỬA TẠI ĐÂY: Mặc định PhoBERT dùng text CÓ gạch dưới
+    default_text_column="tokens_text"  # SỬA TẠI ĐÂY: Mặc định PhoBERT dùng text CÓ gạch dưới
 ):
     parser = argparse.ArgumentParser(description=f"Train {run_name}")
     parser.add_argument("--data_dir", type=str, default=get_default_data_dir())
@@ -293,12 +337,8 @@ def run_experiment(
     parser.add_argument("--dev_file", type=str, default="features_dev.csv")
     parser.add_argument("--test_file", type=str, default="features_test.csv")
     
-    # SỬA TẠI ĐÂY: Trỏ biến default vào tham số mới truyền vào
     parser.add_argument("--text_column", type=str, default=default_text_column) 
-    # === BỔ SUNG DÒNG NÀY ĐỂ VÁ LỖI ATTRIBUTEERROR ===
     parser.add_argument("--model_name", type=str, default=default_model_name, help="Tên hoặc đường dẫn mô hình Transformer")
-    # =================================================
-    
     parser.add_argument("--feature_columns", type=str, default=",".join(FEATURE_COLUMNS))
     parser.add_argument("--max_len", type=int, default=128)
     parser.add_argument("--batch_size", type=int, default=16)
@@ -312,6 +352,12 @@ def run_experiment(
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--output_dir", type=str, default=get_default_output_dir(default_output_subdir))
+    
+    # BỔ SUNG KHAI BÁO FILE ĐẦU RA
+    parser.add_argument("--confusion_matrix_file", type=str, default="confusion_matrix_test.csv")
+    parser.add_argument("--ovr_metrics_file", type=str, default="ovr_metrics_test.csv")
+    parser.add_argument("--misclassified_file", type=str, default="misclassified_test.csv")
+    
     args = parser.parse_args()
     feature_columns = parse_feature_columns(args.feature_columns)
 
@@ -327,6 +373,24 @@ def run_experiment(
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
+    
+    # === BỔ SUNG KỸ THUẬT OVERSAMPLING CHO TẬP TRAIN ===
+    debug("Thực hiện Oversampling (Nhân bản dữ liệu) để cân bằng nhãn...")
+    clean_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 0]     
+    offensive_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 1] 
+    hate_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 2]      
+    
+    augmented_indices = clean_indices.copy()
+    augmented_indices.extend(offensive_indices * 5) 
+    augmented_indices.extend(hate_indices * 3)      
+    random.shuffle(augmented_indices)
+    
+    train_texts = [train_texts[i] for i in augmented_indices]
+    train_meta = np.array([train_meta[i] for i in augmented_indices])
+    train_labels_raw = [train_labels_raw[i] for i in augmented_indices]
+    debug(f"Kích thước tập Train sau Oversampling: {len(train_texts)} mẫu.")
+    # ===================================================
+
     dev_texts, dev_meta, dev_labels_raw = load_split(
         os.path.join(args.data_dir, args.dev_file),
         text_column=args.text_column,
@@ -337,9 +401,10 @@ def run_experiment(
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
-    debug(
-        f"Loaded rows | train={len(train_texts)}, dev={len(dev_texts)}, test={len(test_texts)}"
-    )
+    # Tải DF để xuất file Misclassified
+    test_df = pd.read_csv(os.path.join(args.data_dir, args.test_file), encoding="utf-8-sig")
+    
+    debug(f"Loaded rows | train={len(train_texts)}, dev={len(dev_texts)}, test={len(test_texts)}")
 
     label2id, id2label = create_label_mapping(train_labels_raw, dev_labels_raw, test_labels_raw)
     train_labels = encode_labels(train_labels_raw, label2id)
@@ -348,11 +413,6 @@ def run_experiment(
     debug(f"Label mapping: {label2id}")
 
     if "bamibert" in args.model_name.lower():
-        # BamiBERT's tokenizer_config.json incorrectly declares tokenizer_class
-        # as XLMRobertaTokenizer (SentencePiece-based), but the repo actually
-        # ships a byte-level BPE tokenizer.json (extended from PhoGPT's
-        # tokenizer). Loading via AutoTokenizer dispatches to the wrong class
-        # and crashes, so load the fast tokenizer file directly instead.
         debug(f"Loading tokenizer: {args.model_name} (PreTrainedTokenizerFast, bypassing AutoTokenizer)")
         tokenizer = PreTrainedTokenizerFast.from_pretrained(args.model_name)
     else:
@@ -373,9 +433,6 @@ def run_experiment(
     )
     test_loader = DataLoader(
         test_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
-    )
-    debug(
-        f"DataLoader batches | train={len(train_loader)}, dev={len(dev_loader)}, test={len(test_loader)}"
     )
 
     num_labels = len(id2label)
@@ -400,8 +457,7 @@ def run_experiment(
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     total_steps = len(train_loader) * args.epochs
     warmup_steps = int(total_steps * args.warmup_ratio)
-    debug(f"Scheduler steps | total={total_steps}, warmup={warmup_steps}")
-
+    
     scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=warmup_steps,
@@ -446,7 +502,17 @@ def run_experiment(
     _, test_true, test_pred = evaluate(model, test_loader, device)
 
     print(f"\n===== {run_name} Test Metrics =====")
-    print_confusion_and_scores(test_true, test_pred, id2label)
+    # BỔ SUNG GỌI HÀM EXPORT ARTIFACTS
+    save_evaluation_artifacts(
+        output_dir=args.output_dir,
+        split_df=test_df,
+        y_true=test_true,
+        y_pred=test_pred,
+        id2label=id2label,
+        confusion_matrix_file=args.confusion_matrix_file,
+        ovr_metrics_file=args.ovr_metrics_file,
+        misclassified_file=args.misclassified_file,
+    )
 
     os.makedirs(args.output_dir, exist_ok=True)
     debug(f"Saving model and tokenizer to {args.output_dir}")
