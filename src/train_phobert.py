@@ -21,7 +21,7 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 
 
 DEFAULT_TEXT_COLUMN = "transformer_text"
-FEATURE_COLUMNS = [
+DEFAULT_FEATURE_COLUMNS = [
     "feat_log_num_tokens",
     "feat_log_num_chars",
     "feat_avg_token_len",
@@ -33,9 +33,8 @@ FEATURE_COLUMNS = [
     "feat_elongated_ratio",
     "feat_exclamation_density",
     "feat_allcaps_ratio",
-    "feat_laugh_density",         # Tín hiệu cười cợt mỉa mai
-    "feat_sarcasm_words",         # Tín hiệu khen ngợi giả tạo
-    "feat_contrast_score",        # Mức độ tương phản ngữ nghĩa (Chìa khóa bắt Mỉa mai)
+    "feat_laugh_density",         # <--- Cập nhật dòng này
+    "feat_aggressive_pronoun",    # <--- Cập nhật dòng này
 ]
 
 
@@ -157,15 +156,6 @@ class TransformerWithMetaFeatures(nn.Module):
             encoder_inputs["token_type_ids"] = token_type_ids
 
         outputs = self.encoder(**encoder_inputs)
-        # Always take the raw [CLS] token embedding from the last hidden state
-        # instead of the encoder's own pooler_output. RoBERTa-family models
-        # (BamiBERT, PhoBERT) are pre-trained without a next-sentence-prediction
-        # objective, so their pooler weights are either absent from the released
-        # checkpoint or never actually trained (randomly initialized). Using the
-        # raw CLS embedding avoids depending on that untrained layer and matches
-        # HuggingFace's own RobertaForSequenceClassification behavior. It also
-        # keeps pooling consistent across all encoders used in this script,
-        # including DistilBERT (which has no pooler_output at all).
         pooled_output = outputs.last_hidden_state[:, 0, :]
 
         text_repr = self.text_dropout(pooled_output)
@@ -348,11 +338,6 @@ def run_experiment(
     debug(f"Label mapping: {label2id}")
 
     if "bamibert" in args.model_name.lower():
-        # BamiBERT's tokenizer_config.json incorrectly declares tokenizer_class
-        # as XLMRobertaTokenizer (SentencePiece-based), but the repo actually
-        # ships a byte-level BPE tokenizer.json (extended from PhoGPT's
-        # tokenizer). Loading via AutoTokenizer dispatches to the wrong class
-        # and crashes, so load the fast tokenizer file directly instead.
         debug(f"Loading tokenizer: {args.model_name} (PreTrainedTokenizerFast, bypassing AutoTokenizer)")
         tokenizer = PreTrainedTokenizerFast.from_pretrained(args.model_name)
     else:

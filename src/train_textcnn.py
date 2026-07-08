@@ -27,7 +27,7 @@ DEFAULT_FEATURE_COLUMNS = [
     "feat_elongated_ratio",
     "feat_exclamation_density",
     "feat_allcaps_ratio",
-    "feat_laugh_density",         
+    "feat_laugh_density",         # <--- Cập nhật dòng này
     "feat_aggressive_pronoun",    # <--- Cập nhật dòng này
 ]
 def debug(msg: str) -> None:
@@ -95,31 +95,6 @@ def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
         vocab[token] = len(vocab)
     return vocab
 
-# def load_fasttext_vectors(vec_path: str):
-#     """
-#     Tải file FastText (.vec) vào bộ nhớ dưới dạng dictionary.
-#     """
-#     debug(f"Đang tải FastText vectors từ {vec_path} (Quá trình này có thể mất vài phút)...")
-#     embeddings_dict = {}
-#     with open(vec_path, 'r', encoding='utf-8') as f:
-#         # File .vec thường có dòng đầu tiên chứa: [số_lượng_từ] [số_chiều]
-#         first_line = f.readline().split()
-#         if len(first_line) == 2:
-#             pass # Bỏ qua dòng đầu
-#         else:
-#             f.seek(0)
-            
-#         for line in f:
-#             values = line.rstrip().split(' ')
-#             word = values[0]
-#             # FastText mặc định là chữ in thường, nên ta đồng bộ bằng .lower()
-#             word_lower = word.lower() 
-#             vector = np.asarray(values[1:], dtype='float32')
-#             embeddings_dict[word_lower] = vector
-            
-#     debug(f"Đã tải thành công {len(embeddings_dict)} vector từ vựng.")
-#     return embeddings_dict
-# THÊM THAM SỐ vocab VÀO HÀM
 def load_fasttext_vectors(vec_path: str, vocab: dict):
     """
     Tải file FastText (.vec) nhưng CHỈ giữ lại các từ có trong vocab 
@@ -130,7 +105,7 @@ def load_fasttext_vectors(vec_path: str, vocab: dict):
     with open(vec_path, 'r', encoding='utf-8') as f:
         first_line = f.readline().split()
         if len(first_line) == 2:
-            pass # Bỏ qua dòng đầu
+            pass 
         else:
             f.seek(0)
             
@@ -138,8 +113,6 @@ def load_fasttext_vectors(vec_path: str, vocab: dict):
             values = line.rstrip().split(' ')
             word = values[0]
             word_lower = word.lower() 
-            
-            # GIẢI PHÁP TỐI ƯU RAM: CHỈ lưu vector nếu từ đó CÓ TRONG TỪ ĐIỂN CỦA TẬP TRAIN
             if word_lower in vocab:
                 vector = np.asarray(values[1:], dtype='float32')
                 embeddings_dict[word_lower] = vector
@@ -223,15 +196,6 @@ class TextCNN(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
         self.dropout = nn.Dropout(dropout)
         classifier_in_dim = num_filters * len(kernel_sizes)
-        # self.meta_proj = None
-        # if num_meta_features > 0:
-        #     self.meta_proj = nn.Sequential(
-        #         nn.Linear(num_meta_features, meta_hidden_size),
-        #         nn.ReLU(),
-        #         nn.Dropout(dropout),
-        #     )
-        #     classifier_in_dim = classifier_in_dim + meta_hidden_size
-
         self.meta_proj = None
         if num_meta_features > 0:
             self.meta_proj = nn.Sequential(
