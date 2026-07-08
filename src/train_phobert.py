@@ -173,7 +173,6 @@ class TransformerWithMetaFeatures(nn.Module):
         loss = None
         if labels is not None:
             loss = F.cross_entropy(logits, labels)
-
         return SequenceClassifierOutput(loss=loss, logits=logits)
 
 
@@ -289,7 +288,7 @@ def run_experiment(
     parser.add_argument("--model_name", type=str, default=default_model_name, help="Tên hoặc đường dẫn mô hình Transformer")
     # =================================================
     
-    parser.add_argument("--feature_columns", type=str, default=",".join(FEATURE_COLUMNS))
+    parser.add_argument("--feature_columns", type=str, default=",".join(DEFAULT_FEATURE_COLUMNS))
     parser.add_argument("--max_len", type=int, default=128)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=3)
