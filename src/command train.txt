@@ -37,6 +37,17 @@ kaggle datasets create -p .
     --batch_size 128 \
     --epochs 15
 
+!python /kaggle/input/social-media-mining-src/train_gru.py \
+    --data_dir /kaggle/input/dataset-vihsd-storage \
+    --fasttext_path /kaggle/input/dataset-vihsd-storage/cc.vi.300.vec \
+    --train_file features_train.csv \
+    --dev_file features_dev.csv \
+    --test_file features_test.csv \
+    --output_dir /kaggle/working/models/textcnn \
+    --embed_dim 300 \
+    --batch_size 128 \
+    --epochs 15
+
 
 !python /kaggle/input/datasets/thiuyn/vi-hsd/train_phobert.py \
     --data_dir /kaggle/input/datasets/thiuyn/vi-hsd \
@@ -66,6 +77,16 @@ kaggle datasets create -p .
     --num_workers 2
 
 !python /kaggle/input/datasets/thiuyn/vi-hsd/train_xlm_roberta_base.py \
+    --data_dir /kaggle/input/datasets/thiuyn/vi-hsd \
+    --output_dir /kaggle/working/models/train_xlm_roberta_base \
+    --batch_size 64 \
+    --max_len 64 \
+    --lr 3e-5 \
+    --epochs 5 \
+    --num_workers 2
+
+
+!python /kaggle/input/datasets/thiuyn/vi-hsd/train_bamibert.py \
     --data_dir /kaggle/input/datasets/thiuyn/vi-hsd \
     --output_dir /kaggle/working/models/train_xlm_roberta_base \
     --batch_size 64 \
