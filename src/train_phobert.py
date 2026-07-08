@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import AdamW
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from sklearn.metrics import confusion_matrix, accuracy_score, f1_score
 from transformers import (
     AutoTokenizer,
@@ -33,8 +33,12 @@ DEFAULT_FEATURE_COLUMNS = [
     "feat_elongated_ratio",
     "feat_exclamation_density",
     "feat_allcaps_ratio",
-    "feat_laugh_density",         # <--- Cập nhật dòng này
-    "feat_aggressive_pronoun",    # <--- Cập nhật dòng này
+    "feat_laugh_density",         # Tín hiệu cười cợt mỉa mai
+    "feat_aggressive_pronoun",    # ĐẶC TRƯNG MỚI: Đại từ công kích
+    # "feat_contrast_score",
+    "feat_sarcastic_punct",
+    "feat_scare_quotes",
+    "feat_intensifier_words",
 ]
 
 
@@ -117,7 +121,8 @@ class TransformerWithMetaFeatures(nn.Module):
         num_labels: int,
         num_meta_features: int,
         feature_hidden_size: int,
-        dropout: float,
+        text_dropout: float, # Thêm tham số
+        feature_dropout: float, # Thêm tham số
         id2label=None,
         label2id=None,
     ):
@@ -125,12 +130,12 @@ class TransformerWithMetaFeatures(nn.Module):
         self.encoder = AutoModel.from_pretrained(model_name)
         encoder_hidden_size = self.encoder.config.hidden_size
 
-        self.text_dropout = nn.Dropout(dropout)
+        self.text_dropout = nn.Dropout(text_dropout) # Gán text_dropout
         self.meta_proj = nn.Sequential(
             nn.LayerNorm(num_meta_features),
             nn.Linear(num_meta_features, feature_hidden_size),
             nn.GELU(),
-            nn.Dropout(dropout),
+            nn.Dropout(feature_dropout), # Gán feature_dropout
         )
         self.classifier = nn.Linear(encoder_hidden_size + feature_hidden_size, num_labels)
 
@@ -172,7 +177,13 @@ class TransformerWithMetaFeatures(nn.Module):
 
         loss = None
         if labels is not None:
-            loss = F.cross_entropy(logits, labels)
+            # Tần suất dựa trên phân tích: Lớp 0 (82.7%), Lớp 1 (6.68%), Lớp 2 (10.63%)
+            # Chuẩn hóa về trung bình = 1
+            device = logits.device
+            class_weights = torch.tensor([1/0.827, 1/0.0668, 1/0.1063]).to(device)
+            class_weights = class_weights / class_weights.sum() * 3
+            
+            loss = F.cross_entropy(logits, labels, weight=class_weights)
         return SequenceClassifierOutput(loss=loss, logits=logits)
 
 
@@ -290,14 +301,15 @@ def run_experiment(
     
     parser.add_argument("--feature_columns", type=str, default=",".join(DEFAULT_FEATURE_COLUMNS))
     parser.add_argument("--max_len", type=int, default=128)
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--batch_size", type=int, default=32) # Tăng từ 16 lên 32
+    parser.add_argument("--epochs", type=int, default=10)     # Tăng từ 3 lên 10
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--feature_hidden_size", type=int, default=64)
-    parser.add_argument("--feature_dropout", type=float, default=0.2)
+    parser.add_argument("--feature_hidden_size", type=int, default=32) # Giảm từ 64 xuống 32
+    parser.add_argument("--text_dropout", type=float, default=0.1)     # Thêm mới
+    parser.add_argument("--feature_dropout", type=float, default=0.3)  # Tăng từ 0.2 lên 0.3
     parser.add_argument("--warmup_ratio", type=float, default=0.1)
-    parser.add_argument("--patience", type=int, default=2)
+    parser.add_argument("--patience", type=int, default=3)    # Tăng từ 2 lên 3
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--output_dir", type=str, default=get_default_output_dir(default_output_subdir))
@@ -349,8 +361,24 @@ def run_experiment(
     dev_ds = TransformerDataset(dev_texts, dev_meta, dev_labels, tokenizer, args.max_len)
     test_ds = TransformerDataset(test_texts, test_meta, test_labels, tokenizer, args.max_len)
 
+# Tính toán trọng số lấy mẫu cho từng dòng dữ liệu trong tập Train
+    class_sample_counts = np.bincount(train_labels)
+    class_weights_sampler = 1. / class_sample_counts
+    sample_weights = np.array([class_weights_sampler[t] for t in train_labels])
+    sample_weights = torch.from_numpy(sample_weights).double()
+    
+    # Tạo Sampler thay cho việc Shuffle mặc định
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True
+    )
+
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
+        train_ds, 
+        batch_size=args.batch_size, 
+        sampler=sampler, # Thay thế shuffle=True bằng sampler
+        num_workers=args.num_workers
     )
     dev_loader = DataLoader(
         dev_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
@@ -372,7 +400,8 @@ def run_experiment(
         num_labels=num_labels,
         num_meta_features=len(feature_columns),
         feature_hidden_size=args.feature_hidden_size,
-        dropout=args.feature_dropout,
+        text_dropout=args.text_dropout,       # Cập nhật
+        feature_dropout=args.feature_dropout, # Cập nhật
         id2label=hf_id2label,
         label2id=hf_label2id,
     )

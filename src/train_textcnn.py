@@ -27,8 +27,12 @@ DEFAULT_FEATURE_COLUMNS = [
     "feat_elongated_ratio",
     "feat_exclamation_density",
     "feat_allcaps_ratio",
-    "feat_laugh_density",         # <--- Cập nhật dòng này
-    "feat_aggressive_pronoun",    # <--- Cập nhật dòng này
+    "feat_laugh_density",         # Tín hiệu cười cợt mỉa mai
+    "feat_aggressive_pronoun",    # ĐẶC TRƯNG MỚI: Đại từ công kích
+    # "feat_contrast_score",
+    "feat_sarcastic_punct",
+    "feat_scare_quotes",
+    "feat_intensifier_words",
 ]
 def debug(msg: str) -> None:
     print(f"[DEBUG][TextCNN] {msg}")

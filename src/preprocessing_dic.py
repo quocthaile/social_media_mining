@@ -345,14 +345,14 @@ COMPOUND_DICT_RAW = {
 # ==========================================
 STOPWORDS = set([
     "và", "là", "như", "thì", "mà", "nếu", "có", "các", "những", "của",
-    "cho", "đi", "này", "cái", "nó", "rồi", "lại", "ra", "còn",
+    "cho", "đi", "cái", "nó", "rồi", "lại", "ra", "còn",
     "phải", "mình", "ơi", "nào", "thế", "sao", "ai", "ở", "đâu", "đó",
     "để", "thôi", "vậy", "với", "chỉ", "cả", "đã", "vào", "nên", "nữa",
-    "từ", "khi", "đến", "trong", "vì", "cứ", "sau", "con", "gì", "rất",
-    "quá", "đang", "mới", "hơn", "luôn", "được", "hoặc", "làm",
+    "từ", "khi", "đến", "trong", "vì", "cứ", "sau", "gì", "rất",
+    "quá", "đang", "mới", "hơn", "luôn", "hoặc", "làm",
     "thấy", "bị", "nhé", "nha", "hả", "thật",
     "cũng",  "biết",  "muốn",
-    "đúng",  "vẫn",   "cần", "chứ",
+    "vẫn",   "cần", "chứ",
     "sẽ",    "đây",
     "đấy",   "lắm",   "hết",   "theo",  "nhau",
     "vừa",   "thêm",  "tất",
