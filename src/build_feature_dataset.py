@@ -52,7 +52,7 @@ AGGRESSIVE_PRONOUNS_LIST = [
 ]
 
 INTENSIFIER_SARCASTIC_LIST = [
-    "quá cơ", "lắm cơ", "ghê", "cơ à", "hộ cái", "giùm cái", "quá chừng", "quá trời", "thế cơ",
+    "quá cơ", "lắm cơ", "ghê", "cơ à", "hộ cái", "giùm cái", "quá chừng", "quá trời", "thế cơ", "chứ", ":v", ":V"
 ]
 
 POSITIVE_SARCASTIC_LIST = [
