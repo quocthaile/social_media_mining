@@ -31,7 +31,14 @@ DEFAULT_FEATURE_COLUMNS = [
     "feat_digit_ratio",
     "feat_bad_word_density",      # <--- BỔ SUNG: Rất quan trọng cho nhãn OFFENSIVE/HATE
     "feat_exclamation_density",  # <--- BỔ SUNG: Biểu thị sắc thái kích động
-    "feat_allcaps_ratio" 
+    "feat_allcaps_ratio",
+    "feat_laugh_density",         # Tín hiệu cười cợt mỉa mai
+    "feat_sarcasm_words",         # Tín hiệu khen ngợi giả tạo
+    "feat_contrast_score",        # Mức độ tương phản ngữ nghĩa (Chìa khóa bắt Mỉa mai)
+    "feat_sarcastic_punct",      # Tín hiệu dấu câu mỉa mai
+    "feat_scare_quotes",         # Tín hiệu dấu ngoặc kép mỉa
+    "feat_intensifier_words",
+
 ]
 
 

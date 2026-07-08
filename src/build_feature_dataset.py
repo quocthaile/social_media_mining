@@ -24,11 +24,22 @@ FEATURE_COLUMNS = [
     "feat_laugh_density",         # Tín hiệu cười cợt mỉa mai
     "feat_sarcasm_words",         # Tín hiệu khen ngợi giả tạo
     "feat_contrast_score",        # Mức độ tương phản ngữ nghĩa (Chìa khóa bắt Mỉa mai)
+    "feat_sarcastic_punct",      # Tín hiệu dấu câu mỉa mai
+    "feat_scare_quotes",         # Tín hiệu dấu ngoặc kép mỉa
+    "feat_intensifier_words",     # Tín hiệu từ cường điệu mỉa mai
 ]
 
 EMOJI_TAG_PATTERN = re.compile(r"\bEMOJI_[A-Z_]+\b")
 EMOJI_ALIAS_PATTERN = re.compile(r":\s*[a-z0-9_+\-]+\s*:", re.IGNORECASE)
 ELONGATED_PATTERN = re.compile(r'(.)\1{2,}')
+SARCASTIC_PUNCT_PATTERN = re.compile(r'(\?{2,})|(!{2,})|(\?!|\!\?)|(\.{3,})')
+QUOTED_WORD_PATTERN = re.compile(r'["\'“‘]([^"\'”’\s]+)["\'”’]')
+
+
+
+INTENSIFIER_SARCASTIC_LIST = [
+    "quá cơ", "lắm cơ", "ghê", "cơ à", "hộ cái", "giùm cái", "quá chừng", "quá trời", "thế cơ", 
+]
 
 BAD_WORDS_LIST = [
     "lồn", "đéo", "địt", "đkm", "vcl", "cặc", "ngu", "chó", "đĩ", 
@@ -46,6 +57,7 @@ POSITIVE_SARCASTIC_LIST = [
     "đáng tuyên dương", "hảo hán", "đỉnh cao", "xuất chúng", "tốt đẹp"
 ]
 
+INTENSIFIER_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, INTENSIFIER_SARCASTIC_LIST)) + r')\b', re.IGNORECASE)
 BAD_WORDS_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, BAD_WORDS_LIST)) + r')\b', re.IGNORECASE)
 POSITIVE_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, POSITIVE_SARCASTIC_LIST)) + r')\b', re.IGNORECASE)
 
@@ -93,6 +105,17 @@ def count_all_caps_words(text: str) -> int:
     tokens = text.split()
     return sum(1 for t in tokens if t.isupper() and len(t) > 1)
 
+def count_sarcastic_punctuation(text: str) -> int:
+    # Trả về số lượng các tổ hợp dấu câu mang tính mỉa mai
+    return len(SARCASTIC_PUNCT_PATTERN.findall(text))
+
+def count_scare_quotes(text: str) -> int:
+    return len(QUOTED_WORD_PATTERN.findall(text))
+
+def count_intensifier_words(text: str) -> int:
+    clean_text = text.replace('_', ' ').lower()
+    return len(INTENSIFIER_PATTERN.findall(clean_text))
+
 def extract_feature_row(text: str) -> dict:
     tokens = [tok for tok in text.split(" ") if tok]
     num_tokens = len(tokens)
@@ -110,10 +133,11 @@ def extract_feature_row(text: str) -> dict:
     elongated_count = count_elongated_words(text)
     exclamation_count = count_exclamation_question(text)
     allcaps_count = count_all_caps_words(text)
-    
+    sarcastic_punct_count = count_sarcastic_punctuation(text)
+    scare_quote_count = count_scare_quotes(text)
     pos_word_count = count_positive_words(text)
     laugh_count = count_laugh_signals(text)
-    
+    intensifier_count = count_intensifier_words(text)
     # HÀM TƯƠNG PHẢN (CHÌA KHÓA BẮT MỈA MAI)
     # Nếu câu vừa có Khen vừa có Chửi -> Sarcasm Score = 1, 2...
     # Nếu câu vừa có Khen vừa Cười cợt -> Sarcasm Score = 1, 2...
@@ -134,6 +158,9 @@ def extract_feature_row(text: str) -> dict:
         # 3 Đặc trưng mới
         "feat_laugh_density": float(laugh_count / max(num_tokens, 1)),
         "feat_sarcasm_words": float(pos_word_count / max(num_tokens, 1)),
+        "feat_sarcastic_punct": float(sarcastic_punct_count / max(num_chars, 1)),
+        "feat_scare_quotes": float(scare_quote_count / max(num_tokens, 1)),
+        "feat_intensifier_words": float(intensifier_count / max(num_tokens, 1)),
         "feat_contrast_score": float(contrast_score),
     }
 
