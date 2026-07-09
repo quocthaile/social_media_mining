@@ -223,7 +223,21 @@ def evaluate(model, loader, device):
 
         loss = outputs.loss
         logits = outputs.logits
-        preds = torch.argmax(logits, dim=1)
+        
+        # BỔ SUNG: THRESHOLD MOVING
+        probs = torch.softmax(logits, dim=1)
+        batch_preds = []
+        for p in probs:
+            # Nhãn 2 (Thù địch): Giữ mốc 0.25
+            if p[2] > 0.25:
+                batch_preds.append(2)
+            # Nhãn 1 (Xúc phạm): Hạ mốc xuống 0.15
+            elif p[1] > 0.15:
+                batch_preds.append(1)
+            else:
+                batch_preds.append(torch.argmax(p).item())
+                
+        preds = torch.tensor(batch_preds)
 
         total_loss += loss.item() * batch["labels"].size(0)
         y_true.extend(batch["labels"].cpu().tolist())
@@ -271,6 +285,33 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
     f1_macro = f1_score(y_true, y_pred, average="macro")
     print(f"\nAccuracy: {acc:.4f}")
     print(f"F1-macro: {f1_macro:.4f}")
+    print(f"\nAccuracy: {acc:.4f}")
+    print(f"F1-macro: {f1_macro:.4f}")
+    
+    # THÊM DÒNG NÀY VÀO CUỐI HÀM
+    return cm_df, pd.DataFrame(rows), acc, f1_macro
+
+def save_evaluation_artifacts(
+    output_dir, split_df, y_true, y_pred, id2label,
+    confusion_matrix_file, ovr_metrics_file, misclassified_file
+):
+    cm_df, ovr_df, acc, f1_macro = print_confusion_and_scores(y_true, y_pred, id2label)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    cm_path = os.path.join(output_dir, confusion_matrix_file)
+    ovr_path = os.path.join(output_dir, ovr_metrics_file)
+    mis_path = os.path.join(output_dir, misclassified_file)
+
+    cm_df.to_csv(cm_path, encoding="utf-8-sig")
+    ovr_df.to_csv(ovr_path, index=False, encoding="utf-8-sig")
+
+    eval_df = split_df.reset_index(drop=True).copy()
+    eval_df["label_id_true"] = [id2label[i] for i in y_true]
+    eval_df["label_id_pred"] = [id2label[i] for i in y_pred]
+    eval_df["is_misclassified"] = eval_df["label_id_true"] != eval_df["label_id_pred"]
+
+    mis_df = eval_df[eval_df["is_misclassified"]].copy()
+    mis_df.to_csv(mis_path, index=False, encoding="utf-8-sig")
 
 
 def parse_feature_columns(raw: str):
@@ -313,6 +354,9 @@ def run_experiment(
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--output_dir", type=str, default=get_default_output_dir(default_output_subdir))
+    parser.add_argument("--confusion_matrix_file", type=str, default="confusion_matrix_test.csv")
+    parser.add_argument("--ovr_metrics_file", type=str, default="ovr_metrics_test.csv")
+    parser.add_argument("--misclassified_file", type=str, default="misclassified_test.csv")
     args = parser.parse_args()
     feature_columns = parse_feature_columns(args.feature_columns)
 
@@ -338,6 +382,7 @@ def run_experiment(
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
+    test_df = pd.read_csv(os.path.join(args.data_dir, args.test_file), encoding="utf-8-sig")
     debug(
         f"Loaded rows | train={len(train_texts)}, dev={len(dev_texts)}, test={len(test_texts)}"
     )
@@ -460,6 +505,16 @@ def run_experiment(
 
     print(f"\n===== {run_name} Test Metrics =====")
     print_confusion_and_scores(test_true, test_pred, id2label)
+    save_evaluation_artifacts(
+        output_dir=args.output_dir,
+        split_df=test_df,
+        y_true=test_true,
+        y_pred=test_pred,
+        id2label=id2label,
+        confusion_matrix_file=args.confusion_matrix_file,
+        ovr_metrics_file=args.ovr_metrics_file,
+        misclassified_file=args.misclassified_file,
+    )
 
     os.makedirs(args.output_dir, exist_ok=True)
     debug(f"Saving model and tokenizer to {args.output_dir}")

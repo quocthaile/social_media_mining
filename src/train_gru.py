@@ -320,7 +320,7 @@ def evaluate(model, loader, criterion, device):
             if p[2] > 0.25:
                 preds.append(2)
             # Nếu xác suất Xúc phạm > 0.25 -> Chọn Xúc phạm
-            elif p[1] > 0.25:
+            elif p[1] > 0.18:
                 preds.append(1)
             else:
                 preds.append(torch.argmax(p).item()) # Quay về argmax nếu ko đạt ngưỡng
