@@ -10,23 +10,23 @@ DEFAULT_OUTPUT_PREFIX = "features"
 
 # CẬP NHẬT: THAY THẾ 2 ĐẶC TRƯNG CŨ BẰNG ĐẶC TRƯNG ĐẠI TỪ
 FEATURE_COLUMNS = [
-    "feat_log_num_tokens",
-    "feat_log_num_chars",
-    "feat_avg_token_len",
+    "feat_log_num_tokens",      # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
+    "feat_log_num_chars",       # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
+    "feat_avg_token_len",       # ĐẶC TRƯNG MỚI: Độ dài trung bình của token
     "feat_emoji_density",
     "feat_punct_density",
-    "feat_upper_ratio",
-    "feat_digit_ratio",
-    "feat_bad_word_density",
-    "feat_elongated_ratio",
-    "feat_exclamation_density",
-    "feat_allcaps_ratio",
+    "feat_upper_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ chữ hoa
+    # "feat_digit_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ chữ số
+    "feat_bad_word_density",        # ĐẶC TRƯNG MỚI: Tỉ lệ từ tục tĩu
+    # "feat_elongated_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ từ kéo dài
+    "feat_exclamation_density",         # ĐẶC TRƯNG MỚI: Tỉ lệ dấu chấm than
+    "feat_allcaps_ratio",       # ĐẶC TRƯNG MỚI: Tỉ lệ chữ hoa toàn bộ
     "feat_laugh_density",         # Tín hiệu cười cợt mỉa mai
     "feat_aggressive_pronoun",    # ĐẶC TRƯNG MỚI: Đại từ công kích
     # "feat_contrast_score",
-    "feat_sarcastic_punct",
-    "feat_scare_quotes",
-    "feat_intensifier_words",
+    "feat_sarcastic_punct",       # ĐẶC TRƯNG MỚI: Dấu câu mỉa mai
+    "feat_scare_quotes",           # ĐẶC TRƯNG MỚI: Dấu ngoặc kép mỉa mai
+    "feat_intensifier_words",       # ĐẶC TRƯNG MỚI: Từ cường điệu mỉa mai
 ]
 
 EMOJI_TAG_PATTERN = re.compile(r"\bEMOJI_[A-Z_]+\b")
@@ -67,8 +67,8 @@ BAD_WORDS_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, SORTED_BAD_WOR
 SORTED_AGGRESSIVE = sorted(AGGRESSIVE_PRONOUNS_LIST, key=len, reverse=True)
 AGGRESSIVE_PRONOUN_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, SORTED_AGGRESSIVE)) + r')\b', re.IGNORECASE)
 
-SORTED_INTENSIFIER = sorted(INTENSIFIER_SARCASTIC_LIST, key=len, reverse=True)
-INTENSIFIER_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, SORTED_INTENSIFIER)) + r')\b', re.IGNORECASE)
+# SORTED_INTENSIFIER = sorted(INTENSIFIER_SARCASTIC_LIST, key=len, reverse=True)
+INTENSIFIER_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, INTENSIFIER_SARCASTIC_LIST)) + r')\b', re.IGNORECASE)
 
 SORTED_POSITIVE = sorted(POSITIVE_SARCASTIC_LIST, key=len, reverse=True)
 POSITIVE_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, SORTED_POSITIVE)) + r')\b', re.IGNORECASE)

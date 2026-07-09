@@ -22,25 +22,24 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 
 DEFAULT_TEXT_COLUMN = "transformer_text"
 DEFAULT_FEATURE_COLUMNS = [
-    "feat_log_num_tokens",
-    "feat_log_num_chars",
-    "feat_avg_token_len",
+    "feat_log_num_tokens",      # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
+    "feat_log_num_chars",       # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
+    "feat_avg_token_len",       # ĐẶC TRƯNG MỚI: Độ dài trung bình của token
     "feat_emoji_density",
     "feat_punct_density",
-    "feat_upper_ratio",
-    "feat_digit_ratio",
-    "feat_bad_word_density",
-    "feat_elongated_ratio",
-    "feat_exclamation_density",
-    "feat_allcaps_ratio",
+    "feat_upper_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ chữ hoa
+    # "feat_digit_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ chữ số
+    "feat_bad_word_density",        # ĐẶC TRƯNG MỚI: Tỉ lệ từ tục tĩu
+    # "feat_elongated_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ từ kéo dài
+    "feat_exclamation_density",         # ĐẶC TRƯNG MỚI: Tỉ lệ dấu chấm than
+    "feat_allcaps_ratio",       # ĐẶC TRƯNG MỚI: Tỉ lệ chữ hoa toàn bộ
     "feat_laugh_density",         # Tín hiệu cười cợt mỉa mai
     "feat_aggressive_pronoun",    # ĐẶC TRƯNG MỚI: Đại từ công kích
     # "feat_contrast_score",
-    "feat_sarcastic_punct",
-    "feat_scare_quotes",
-    "feat_intensifier_words",
+    "feat_sarcastic_punct",       # ĐẶC TRƯNG MỚI: Dấu câu mỉa mai
+    "feat_scare_quotes",           # ĐẶC TRƯNG MỚI: Dấu ngoặc kép mỉa mai
+    "feat_intensifier_words",       # ĐẶC TRƯNG MỚI: Từ cường điệu mỉa mai
 ]
-
 
 def debug(msg: str) -> None:
     print(f"[DEBUG][Transformer] {msg}")
