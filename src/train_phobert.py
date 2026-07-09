@@ -285,8 +285,8 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
     f1_macro = f1_score(y_true, y_pred, average="macro")
     print(f"\nAccuracy: {acc:.4f}")
     print(f"F1-macro: {f1_macro:.4f}")
-    print(f"\nAccuracy: {acc:.4f}")
-    print(f"F1-macro: {f1_macro:.4f}")
+    # print(f"\nAccuracy: {acc:.4f}")
+    # print(f"F1-macro: {f1_macro:.4f}")
     
     # THÊM DÒNG NÀY VÀO CUỐI HÀM
     return cm_df, pd.DataFrame(rows), acc, f1_macro

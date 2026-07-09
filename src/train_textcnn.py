@@ -44,28 +44,23 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-
 def get_default_data_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dataset-vihsd"))
-
 
 def load_split(csv_path: str, text_column: str, feature_columns):
     df = pd.read_csv(csv_path, encoding="utf-8-sig")
     required_cols = {text_column, "label_id", *feature_columns}
     if not required_cols.issubset(df.columns):
         raise ValueError(f"{csv_path} must contain columns: {required_cols}")
-
     texts = df[text_column].fillna("").astype(str).tolist()
     meta_features = (
         df[feature_columns]
         .apply(pd.to_numeric, errors="coerce")
         .fillna(0.0)
         .astype(np.float32)
-        .values
-    )
+        .values)
     labels = pd.to_numeric(df["label_id"], errors="raise").astype(int).tolist()
     return texts, meta_features, labels
-
 
 def create_label_mapping(*label_lists):
     all_labels = []
@@ -256,34 +251,28 @@ def evaluate(model, loader, criterion, device):
     total_loss = 0.0
     y_true, y_pred = [], []
     debug(f"Evaluating with {len(loader)} batches")
-
     for batch_idx, (x, meta, y) in enumerate(loader, start=1):
         x, meta, y = x.to(device), meta.to(device), y.to(device)
         logits = model(x, meta)
         loss = criterion(logits, y)
 
-        # preds = torch.argmax(logits, dim=1)
-        # BỔ SUNG THRESHOLD MOVING
+        # THRESHOLD MOVING
         probs = torch.softmax(logits, dim=1)
         preds = []
         for p in probs:
-            # p[0] là Sạch, p[1] là Xúc phạm, p[2] là Thù địch
-            # Nếu xác suất Thù địch > 0.25 -> Chọn Thù địch (không cần đợi tới > 0.33)
-            if p[2] > 0.25:
+            # {p[0], p[1], p[2]}
+            if p[2] > 0.30:
                 preds.append(2)
-            # Nếu xác suất Xúc phạm > 0.25 -> Chọn Xúc phạm
-            elif p[1] > 0.18:
+            elif p[1] > 0.25:
                 preds.append(1)
             else:
-                preds.append(torch.argmax(p).item()) # Quay về argmax nếu ko đạt ngưỡng
-                
+                preds.append(torch.argmax(p).item()) 
         preds = torch.tensor(preds)
         total_loss += loss.item() * x.size(0)
         y_true.extend(y.cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
         if batch_idx % 50 == 0 or batch_idx == len(loader):
             debug(f"Eval batch {batch_idx}/{len(loader)}")
-
     return total_loss / len(loader.dataset), y_true, y_pred
 
 
@@ -437,14 +426,14 @@ def parse_args():
     )
     parser.add_argument("--num_filters", type=int, default=128)
     parser.add_argument("--kernel_sizes", type=str, default="3,4,5")
-    parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument("--dropout", type=float, default=0.5)
 
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--meta_hidden_size", type=int, default=32)
+    parser.add_argument("--meta_hidden_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument(
         "--output_dir",
@@ -589,7 +578,7 @@ def main():
 
     # BỔ SUNG SCHEDULER: Giảm LR đi một nửa (factor=0.5) nếu dev_f1 không tăng sau 2 epoch
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=2
+        optimizer, mode='max', factor=0.5, patience=3
     )
     # ----------------------------------------------------------
     debug("Optimizer and criterion initialized")
