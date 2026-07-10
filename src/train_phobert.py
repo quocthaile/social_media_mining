@@ -131,10 +131,10 @@ class TransformerWithMetaFeatures(nn.Module):
 
         self.text_dropout = nn.Dropout(text_dropout) # Gán text_dropout
         self.meta_proj = nn.Sequential(
-            nn.LayerNorm(num_meta_features),
+            nn.BatchNorm1d(num_meta_features), # Đổi LayerNorm thành BatchNorm1d
             nn.Linear(num_meta_features, feature_hidden_size),
-            nn.GELU(),
-            nn.Dropout(feature_dropout), # Gán feature_dropout
+            nn.SiLU(),
+            nn.Dropout(feature_dropout),
         )
         self.classifier = nn.Linear(encoder_hidden_size + feature_hidden_size, num_labels)
 
@@ -224,19 +224,20 @@ def evaluate(model, loader, device):
         logits = outputs.logits
         
         # BỔ SUNG: THRESHOLD MOVING
-        probs = torch.softmax(logits, dim=1)
-        batch_preds = []
-        for p in probs:
-            # Nhãn 2 (Thù địch): Giữ mốc 0.25
-            if p[2] > 0.25:
-                batch_preds.append(2)
-            # Nhãn 1 (Xúc phạm): Hạ mốc xuống 0.15
-            elif p[1] > 0.15:
-                batch_preds.append(1)
-            else:
-                batch_preds.append(torch.argmax(p).item())
+        # probs = torch.softmax(logits, dim=1)
+        # batch_preds = []
+        # for p in probs:
+        #     # Nhãn 2 (Thù địch): Giữ mốc 0.25
+        #     if p[2] > 0.25:
+        #         batch_preds.append(2)
+        #     # Nhãn 1 (Xúc phạm): Hạ mốc xuống 0.15
+        #     elif p[1] > 0.15:
+        #         batch_preds.append(1)
+        #     else:
+        #         batch_preds.append(torch.argmax(p).item())
+        preds = torch.argmax(logits, dim=1)
                 
-        preds = torch.tensor(batch_preds)
+        # preds = torch.tensor(batch_preds)
 
         total_loss += loss.item() * batch["labels"].size(0)
         y_true.extend(batch["labels"].cpu().tolist())
@@ -406,22 +407,22 @@ def run_experiment(
     test_ds = TransformerDataset(test_texts, test_meta, test_labels, tokenizer, args.max_len)
 
 # Tính toán trọng số lấy mẫu cho từng dòng dữ liệu trong tập Train
-    class_sample_counts = np.bincount(train_labels)
-    class_weights_sampler = 1. / class_sample_counts
-    sample_weights = np.array([class_weights_sampler[t] for t in train_labels])
-    sample_weights = torch.from_numpy(sample_weights).double()
+    # class_sample_counts = np.bincount(train_labels)
+    # class_weights_sampler = 1. / class_sample_counts
+    # sample_weights = np.array([class_weights_sampler[t] for t in train_labels])
+    # sample_weights = torch.from_numpy(sample_weights).double()
     
     # Tạo Sampler thay cho việc Shuffle mặc định
-    sampler = WeightedRandomSampler(
-        weights=sample_weights,
-        num_samples=len(sample_weights),
-        replacement=True
-    )
+    # sampler = WeightedRandomSampler(
+    #     weights=sample_weights,
+    #     num_samples=len(sample_weights),
+    #     replacement=True
+    # )
 
     train_loader = DataLoader(
         train_ds, 
         batch_size=args.batch_size, 
-        sampler=sampler, # Thay thế shuffle=True bằng sampler
+        shuffle=True, # Bật lại shuffle tự nhiên
         num_workers=args.num_workers
     )
     dev_loader = DataLoader(
@@ -503,7 +504,7 @@ def run_experiment(
     _, test_true, test_pred = evaluate(model, test_loader, device)
 
     print(f"\n===== {run_name} Test Metrics =====")
-    print_confusion_and_scores(test_true, test_pred, id2label)
+    # print_confusion_and_scores(test_true, test_pred, id2label)
     save_evaluation_artifacts(
         output_dir=args.output_dir,
         split_df=test_df,

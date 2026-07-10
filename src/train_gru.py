@@ -253,7 +253,7 @@ class GRUClassifier(nn.Module):
                 
                 # BƯỚC 2: Chiếu qua lớp Linear để học mối tương quan
                 nn.Linear(num_meta_features, meta_hidden_size),
-                nn.ReLU(),
+                nn.SiLU(),
                 nn.Dropout(dropout),
             )
             out_dim = out_dim + meta_hidden_size
@@ -303,37 +303,18 @@ def evaluate(model, loader, criterion, device):
     model.eval()
     total_loss = 0.0
     y_true, y_pred = [], []
-    debug(f"Evaluating with {len(loader)} batches")
-
     for batch_idx, (x, meta, y) in enumerate(loader, start=1):
         x, meta, y = x.to(device), meta.to(device), y.to(device)
         logits = model(x, meta)
         loss = criterion(logits, y)
 
-        # preds = torch.argmax(logits, dim=1)
-        # BỔ SUNG THRESHOLD MOVING
-        probs = torch.softmax(logits, dim=1)
-        preds = []
-        for p in probs:
-            # p[0] là Sạch, p[1] là Xúc phạm, p[2] là Thù địch
-            # Nếu xác suất Thù địch > 0.25 -> Chọn Thù địch (không cần đợi tới > 0.33)
-            if p[2] > 0.25:
-                preds.append(2)
-            # Nếu xác suất Xúc phạm > 0.25 -> Chọn Xúc phạm
-            elif p[1] > 0.18:
-                preds.append(1)
-            else:
-                preds.append(torch.argmax(p).item()) # Quay về argmax nếu ko đạt ngưỡng
-                
-        preds = torch.tensor(preds)
+        # ĐƯA VỀ LẠI ARGMAX BÌNH THƯỜNG
+        preds = torch.argmax(logits, dim=1) 
+        
         total_loss += loss.item() * x.size(0)
         y_true.extend(y.cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
-        if batch_idx % 50 == 0 or batch_idx == len(loader):
-            debug(f"Eval batch {batch_idx}/{len(loader)}")
-
     return total_loss / len(loader.dataset), y_true, y_pred
-
 
 def print_confusion_and_scores(y_true, y_pred, id2label):
     label_ids = list(range(len(id2label)))

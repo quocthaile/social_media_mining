@@ -8,25 +8,21 @@ import pandas as pd
 DEFAULT_INPUT_PREFIX = "preprocessed"
 DEFAULT_OUTPUT_PREFIX = "features"
 
-# CẬP NHẬT: THAY THẾ 2 ĐẶC TRƯNG CŨ BẰNG ĐẶC TRƯNG ĐẠI TỪ
 FEATURE_COLUMNS = [
-    "feat_log_num_tokens",      # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
-    "feat_log_num_chars",       # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
-    "feat_avg_token_len",       # ĐẶC TRƯNG MỚI: Độ dài trung bình của token
+    "feat_log_num_tokens",      # ĐẶC TRƯNG: Logarithm của số lượng token
+    "feat_log_num_chars",       # ĐẶC TRƯNG: Logarithm của số lượng token
+    "feat_avg_token_len",       # ĐẶC TRƯNG: Độ dài trung bình của token
     "feat_emoji_density",
     "feat_punct_density",
-    "feat_upper_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ chữ hoa
-    # "feat_digit_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ chữ số
-    "feat_bad_word_density",        # ĐẶC TRƯNG MỚI: Tỉ lệ từ tục tĩu
-    # "feat_elongated_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ từ kéo dài
-    "feat_exclamation_density",         # ĐẶC TRƯNG MỚI: Tỉ lệ dấu chấm than
-    "feat_allcaps_ratio",       # ĐẶC TRƯNG MỚI: Tỉ lệ chữ hoa toàn bộ
+    "feat_upper_ratio",         # ĐẶC TRƯNG: Tỉ lệ chữ hoa
+    "feat_bad_word_density",        # ĐẶC TRƯNG: Tỉ lệ từ tục tĩu
+    "feat_exclamation_density",         # ĐẶC TRƯNG: Tỉ lệ dấu chấm than
+    "feat_allcaps_ratio",       # ĐẶC TRƯNG: Tỉ lệ chữ hoa toàn bộ
     "feat_laugh_density",         # Tín hiệu cười cợt mỉa mai
-    "feat_aggressive_pronoun",    # ĐẶC TRƯNG MỚI: Đại từ công kích
-    # "feat_contrast_score",
-    "feat_sarcastic_punct",       # ĐẶC TRƯNG MỚI: Dấu câu mỉa mai
-    "feat_scare_quotes",           # ĐẶC TRƯNG MỚI: Dấu ngoặc kép mỉa mai
-    "feat_intensifier_words",       # ĐẶC TRƯNG MỚI: Từ cường điệu mỉa mai
+    "feat_aggressive_pronoun",    # ĐẶC TRƯNG: Đại từ công kích
+    "feat_sarcastic_punct",       # ĐẶC TRƯNG: Dấu câu mỉa mai
+    "feat_scare_quotes",           # ĐẶC TRƯNG: Dấu ngoặc kép mỉa mai
+    "feat_intensifier_words",       # ĐẶC TRƯNG: Từ cường điệu mỉa mai
 ]
 
 EMOJI_TAG_PATTERN = re.compile(r"\bEMOJI_[A-Z_]+\b")
@@ -128,50 +124,59 @@ def count_intensifier_words(text: str) -> int:
     return len(INTENSIFIER_PATTERN.findall(clean_text))
 
 def extract_feature_row(text: str) -> dict:
+    text = str(text)
     tokens = [tok for tok in text.split(" ") if tok]
     num_tokens = len(tokens)
     num_chars = len(text)
 
+    # Đảm bảo an toàn toán học (tránh lỗi ZeroDivisionError)
+    safe_tokens = max(num_tokens, 1)
+    safe_chars = max(num_chars, 1)
+    safe_alpha = max(sum(1 for ch in text if ch.isalpha()), 1)
+
     avg_token_len = float(np.mean([len(tok) for tok in tokens])) if num_tokens > 0 else 0.0
+
+    # Tính toán tần suất thô (Raw Counts) thông qua các hàm regex đã định nghĩa
     emoji_count = count_emoji_features(text)
     punct_count = count_punctuation(text)
-
-    alpha_count = sum(1 for ch in text if ch.isalpha())
     upper_count = sum(1 for ch in text if ch.isalpha() and ch.isupper())
-    digit_count = sum(1 for ch in text if ch.isdigit())
-
     bad_word_count = count_bad_words(text)
-    elongated_count = count_elongated_words(text)
     exclamation_count = count_exclamation_question(text)
     allcaps_count = count_all_caps_words(text)
-    
-    sarcastic_punct_count = count_sarcastic_punctuation(text)
-    scare_quote_count = count_scare_quotes(text)
-    pos_word_count = count_positive_words(text)
     laugh_count = count_laugh_signals(text)
     agg_pronoun_count = count_aggressive_pronouns(text)
+    sarcastic_punct_count = count_sarcastic_punctuation(text)
+    scare_quote_count = count_scare_quotes(text)
     intensifier_count = count_intensifier_words(text)
 
-    contrast_score = min(pos_word_count, bad_word_count) + min(pos_word_count, laugh_count)
-
+    # Trích xuất và định tuyến đặc trưng
     return {
+        # =================================================================
+        # NHÓM 1: KHÔNG GIAN LOGARITHM (Kích thước văn bản)
+        # =================================================================
         "feat_log_num_tokens": float(np.log1p(num_tokens)),
         "feat_log_num_chars": float(np.log1p(num_chars)),
         "feat_avg_token_len": float(avg_token_len),
-        "feat_emoji_density": float(emoji_count / max(num_tokens, 1)),
-        "feat_punct_density": float(punct_count / max(num_chars, 1)),
-        "feat_upper_ratio": float(upper_count / max(alpha_count, 1)),
-        "feat_digit_ratio": float(digit_count / max(num_chars, 1)),
-        "feat_bad_word_density": float(bad_word_count / max(num_tokens, 1)),
-        "feat_elongated_ratio": float(elongated_count / max(num_tokens, 1)),
-        "feat_exclamation_density": float(exclamation_count / max(num_chars, 1)),
-        "feat_allcaps_ratio": float(allcaps_count / max(num_tokens, 1)),
-        "feat_laugh_density": float(laugh_count / max(num_tokens, 1)),
-        "feat_aggressive_pronoun": float(agg_pronoun_count / max(num_tokens, 1)),
-        "feat_contrast_score": float(contrast_score),
-        "feat_sarcastic_punct": float(sarcastic_punct_count / max(num_chars, 1)),
-        "feat_scare_quotes": float(scare_quote_count / max(num_tokens, 1)),
-        "feat_intensifier_words": float(intensifier_count / max(num_tokens, 1)),
+        
+        # =================================================================
+        # NHÓM 2: TỈ LỆ TUYẾN TÍNH (Cấu trúc & Định dạng)
+        # =================================================================
+        "feat_punct_density": float(punct_count / safe_chars),
+        "feat_upper_ratio": float(upper_count / safe_alpha),
+        "feat_exclamation_density": float(exclamation_count / safe_chars),
+        "feat_allcaps_ratio": float(allcaps_count / safe_tokens),
+        
+        # =================================================================
+        # NHÓM 3: MẬT ĐỘ PHI TUYẾN (Tín hiệu từ vựng / Cảm xúc)
+        # Khôi phục không gian liên tục để cung cấp cường độ cho PhoBERT
+        # =================================================================
+        "feat_emoji_density": float(np.log1p((emoji_count / safe_tokens) * 10)),
+        "feat_bad_word_density": float(np.log1p((bad_word_count / safe_tokens) * 10)),
+        "feat_laugh_density": float(np.log1p((laugh_count / safe_tokens) * 10)),
+        "feat_aggressive_pronoun": float(np.log1p((agg_pronoun_count / safe_tokens) * 10)),
+        "feat_sarcastic_punct": float(np.log1p((sarcastic_punct_count / safe_chars) * 10)),
+        "feat_scare_quotes": float(np.log1p((scare_quote_count / safe_tokens) * 10)),
+        "feat_intensifier_words": float(np.log1p((intensifier_count / safe_tokens) * 10)),
     }
 
 def build_one_split(input_path: str, output_path: str) -> None:
