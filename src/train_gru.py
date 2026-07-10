@@ -13,7 +13,7 @@ from torch.utils.data import Dataset, DataLoader
 PAD_TOKEN = "<pad>"
 UNK_TOKEN = "<unk>"
 
-DEFAULT_TEXT_COLUMN = "tokens_text"
+DEFAULT_TEXT_COLUMN = "transformer_text"
 DEFAULT_FEATURE_COLUMNS = [
     "feat_log_num_tokens",      # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
     "feat_log_num_chars",       # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
@@ -49,23 +49,6 @@ def set_seed(seed: int) -> None:
 def get_default_data_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dataset-vihsd"))
 
-
-# def load_split(csv_path: str, text_column: str, feature_columns):
-#     df = pd.read_csv(csv_path, encoding="utf-8-sig")
-#     required_cols = {text_column, "label_id", *feature_columns}
-#     if not required_cols.issubset(df.columns):
-#         raise ValueError(f"{csv_path} must contain columns: {required_cols}")
-
-#     texts = df[text_column].fillna("").astype(str).tolist()
-#     meta_features = (
-#         df[feature_columns]
-#         .apply(pd.to_numeric, errors="coerce")
-#         .fillna(0.0)
-#         .astype(np.float32)
-#         .values
-#     )
-#     labels = pd.to_numeric(df["label_id"], errors="raise").astype(int).tolist()
-#     return df, texts, meta_features, labels
 def load_split(csv_path: str, text_column: str, feature_columns):
     df = pd.read_csv(csv_path, encoding="utf-8-sig")
     required_cols = {text_column, "label_id", *feature_columns}
@@ -99,20 +82,16 @@ def create_label_mapping(*label_lists):
     id2label = {idx: label for label, idx in label2id.items()}
     return label2id, id2label
 
-
 def encode_labels(labels, label2id):
     return [label2id[label] for label in labels]
 
-
 def tokenize(text: str):
     return text.split()
-
 
 def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
     counter = Counter()
     for text in train_texts:
         counter.update(tokenize(text))
-
     vocab = {PAD_TOKEN: 0, UNK_TOKEN: 1}
     for token, freq in counter.most_common():
         if freq < min_freq:
@@ -122,30 +101,23 @@ def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
         vocab[token] = len(vocab)
     return vocab
 
-
 def load_fasttext_vectors(vec_path: str, vocab=None):
-    """Tải file FastText (.vec) vào bộ nhớ dưới dạng dictionary."""
-    debug(f"Đang tải FastText vectors từ {vec_path} (Quá trình này có thể mất vài phút)...")
+    debug(f"Đang tải FastText vectors từ {vec_path}...")
     embeddings_dict = {}
     with open(vec_path, "r", encoding="utf-8") as f:
         first_line = f.readline().split()
         if len(first_line) != 2:
             f.seek(0)
-
         for line in f:
             values = line.rstrip().split(" ")
             word = values[0]
             word_lower = word.lower()
-
             if vocab is not None and word_lower not in vocab:
                 continue
-
             vector = np.asarray(values[1:], dtype="float32")
             embeddings_dict[word_lower] = vector
-
     debug(f"Đã tải thành công {len(embeddings_dict)} vector từ vựng.")
     return embeddings_dict
-
 
 def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
     """Ánh xạ FastText vectors vào vocab của model."""
@@ -177,13 +149,11 @@ def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
     debug(f"Tỷ lệ khớp FastText: {hits}/{vocab_size} từ ({(hits / vocab_size) * 100:.2f}%).")
     return torch.tensor(embedding_matrix, dtype=torch.float32)
 
-
 def encode_text(text, vocab, max_len):
     token_ids = [vocab.get(tok, vocab[UNK_TOKEN]) for tok in tokenize(text)[:max_len]]
     if len(token_ids) < max_len:
         token_ids += [vocab[PAD_TOKEN]] * (max_len - len(token_ids))
     return token_ids
-
 
 class TextDataset(Dataset):
     def __init__(self, texts, meta_features, labels, vocab, max_len):
@@ -199,7 +169,6 @@ class TextDataset(Dataset):
         meta = torch.tensor(self.meta_features[idx], dtype=torch.float)
         y = torch.tensor(self.labels[idx], dtype=torch.long)
         return x, meta, y
-
 
 class GRUClassifier(nn.Module):
     def __init__(
@@ -414,7 +383,7 @@ def parse_args():
     parser.add_argument("--min_freq", type=int, default=1)
     parser.add_argument("--max_len", type=int, default=128)
 
-    parser.add_argument("--embed_dim", type=int, default=200)
+    parser.add_argument("--embed_dim", type=int, default=300)
     parser.add_argument(
         "--fasttext_path",
         type=str,

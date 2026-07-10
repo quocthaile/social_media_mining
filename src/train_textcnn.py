@@ -14,7 +14,7 @@ import torch.nn.functional as F
 PAD_TOKEN = "<pad>"
 UNK_TOKEN = "<unk>"
 
-DEFAULT_TEXT_COLUMN = "tokens_text"
+DEFAULT_TEXT_COLUMN = "transformer_text"
 DEFAULT_FEATURE_COLUMNS = [
     "feat_log_num_tokens",      # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
     "feat_log_num_chars",       # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
@@ -100,7 +100,7 @@ def load_fasttext_vectors(vec_path: str, vocab: dict):
     Tải file FastText (.vec) nhưng CHỈ giữ lại các từ có trong vocab 
     để tránh tràn bộ nhớ (MemoryError).
     """
-    debug(f"Đang tải FastText vectors từ {vec_path} (Quá trình này có thể mất vài phút)...")
+    debug(f"Đang tải FastText vectors từ {vec_path}...")
     embeddings_dict = {}
     with open(vec_path, 'r', encoding='utf-8') as f:
         first_line = f.readline().split()

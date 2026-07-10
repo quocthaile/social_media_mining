@@ -20,7 +20,7 @@ from transformers import (
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 
-DEFAULT_TEXT_COLUMN = "transformer_text"
+DEFAULT_TEXT_COLUMN = "tokens_text"  # Mặc định PhoBERT dùng text CÓ gạch dưới
 DEFAULT_FEATURE_COLUMNS = [
     "feat_log_num_tokens",      # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
     "feat_log_num_chars",       # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
