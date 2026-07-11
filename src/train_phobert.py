@@ -22,23 +22,11 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 
 DEFAULT_TEXT_COLUMN = "tokens_text"  # Mặc định PhoBERT dùng text CÓ gạch dưới
 DEFAULT_FEATURE_COLUMNS = [
-    "feat_log_num_tokens",      # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
-    "feat_log_num_chars",       # ĐẶC TRƯNG MỚI: Logarithm của số lượng token
-    "feat_avg_token_len",       # ĐẶC TRƯNG MỚI: Độ dài trung bình của token
-    "feat_emoji_density",
-    "feat_punct_density",
-    "feat_upper_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ chữ hoa
-    # "feat_digit_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ chữ số
-    "feat_bad_word_density",        # ĐẶC TRƯNG MỚI: Tỉ lệ từ tục tĩu
-    # "feat_elongated_ratio",         # ĐẶC TRƯNG MỚI: Tỉ lệ từ kéo dài
-    "feat_exclamation_density",         # ĐẶC TRƯNG MỚI: Tỉ lệ dấu chấm than
-    "feat_allcaps_ratio",       # ĐẶC TRƯNG MỚI: Tỉ lệ chữ hoa toàn bộ
-    "feat_laugh_density",         # Tín hiệu cười cợt mỉa mai
-    "feat_aggressive_pronoun",    # ĐẶC TRƯNG MỚI: Đại từ công kích
-    # "feat_contrast_score",
-    "feat_sarcastic_punct",       # ĐẶC TRƯNG MỚI: Dấu câu mỉa mai
-    "feat_scare_quotes",           # ĐẶC TRƯNG MỚI: Dấu ngoặc kép mỉa mai
-    "feat_intensifier_words",       # ĐẶC TRƯNG MỚI: Từ cường điệu mỉa mai
+    "feat_log_num_tokens",      # [Kích thước] Dấu hiệu của bài viết lập luận / thù ghét dài
+    "feat_punct_density",       # [Cấu trúc] Dấu hiệu của sự phẫn nộ, hỗn loạn
+    "feat_upper_ratio",         # [Cấu trúc] Dấu hiệu la hét (CAPSLOCK)
+    "feat_bad_word_density",    # [Từ vựng] Tín hiệu chửi tục / thoá mạ (Đã đánh trọng số)
+    "feat_aggressive_pronoun",  # [Từ vựng] Tín hiệu công kích cá nhân
 ]
 
 def debug(msg: str) -> None:
