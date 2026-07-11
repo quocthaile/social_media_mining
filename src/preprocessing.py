@@ -419,15 +419,42 @@ STOPWORDS = set([
 # CÁC HÀM TIỀN XỬ LÝ
 # ==========================================
 
+VIETNAMESE_ACCENT_REPLACEMENTS = {
+    "oà": "òa", "oá": "óa", "oả": "ỏa", "oã": "õa", "oạ": "ọa",
+    "oè": "òe", "oé": "óe", "oẻ": "ỏe", "oẽ": "õe", "oẹ": "ọe",
+    "uỳ": "ùy", "uý": "úy", "uỷ": "ủy", "uỹ": "ũy", "uỵ": "ụy",
+    "hoà": "hòa", "hoá": "hóa", "hoả": "hỏa", "hoã": "hõa", "hoạ": "họa",
+    "toà": "tòa", "toá": "tóa", "toả": "tỏa", "toã": "tõa", "toạ": "tọa",
+    "loà": "lòa", "loá": "lóa", "loả": "lỏa", "loã": "lõa", "loạ": "lọa",
+    "xoà": "xòa", "xoá": "xóa", "xoả": "xỏa", "xoã": "xõa", "xoạ": "xọa",
+    "đoà": "đòa", "đoá": "đóa", "đoả": "đỏa", "đoã": "đõa", "đoạ": "đọa",
+    "khoà": "khòa", "khoá": "khóa", "khoả": "khỏa", "khoã": "khõa", "khoạ": "khọa",
+    "ngoà": "ngòa", "ngoá": "ngóa", "ngoả": "ngỏa", "ngoã": "ngõa", "ngoạ": "ngọa",
+    "thoà": "thòa", "thoá": "thóa", "thoả": "thỏa", "thoã": "thõa", "thoạ": "thọa",
+    "thuỷ": "thủy", "thuý": "thúy", "thuỳ": "thùy", "thuỹ": "thũy", "thuỵ": "thụy",
+    "huỷ": "hủy", "huý": "húy", "huỳ": "hùy", "huỹ": "hũy", "huỵ": "hụy",
+    "luỷ": "lủy", "luý": "lúy", "luỳ": "lùy", "luỹ": "lũy", "luỵ": "lụy",
+}
+
+def normalize_vietnamese_accents(text: str) -> str:
+    """Chuẩn hóa kiểu gõ dấu cũ sang mới (hoà -> hòa, uý -> úy)."""
+    for old, new in VIETNAMESE_ACCENT_REPLACEMENTS.items():
+        text = text.replace(old, new)
+        text = text.replace(old.upper(), new.upper())
+        text = text.replace(old.capitalize(), new.capitalize())
+    return text
+
 def unicode_normalization(text: str) -> str:
     """
-    [FIX 1] Bước 1: Đồng nhất bảng mã về chuẩn Unicode NFC.
+    [FIX 1] Bước 1: Đồng nhất bảng mã về chuẩn Unicode NFC và chuẩn hóa kiểu gõ dấu tiếng Việt.
     Xử lý lỗi dấu thanh Tổ hợp/Dựng sẵn — rào cản kinh điển trong NLP tiếng Việt.
     Phát hiện: 541/24048 dòng train (2.25%) bị lỗi NFD.
     """
     if not isinstance(text, str):
         return ""
-    return unicodedata.normalize('NFC', text)
+    text = unicodedata.normalize('NFC', text)
+    text = normalize_vietnamese_accents(text)
+    return text
 
 
 def remove_noise(text: str) -> str:
@@ -458,8 +485,12 @@ def apply_lexicon(tokens: list[str], lexicon: dict[str, str]) -> list[str]:
     normalized_tokens = []
     for token in tokens:
         if is_word_token(token) and not is_special_token(token):
-            replacement = lexicon.get(token, token)
-            normalized_tokens.extend(replacement.split())
+            token_lower = token.lower()
+            replacement = lexicon.get(token_lower, token)
+            if replacement == token:
+                normalized_tokens.append(token)
+            else:
+                normalized_tokens.extend(replacement.split())
         else:
             normalized_tokens.append(token)
     return normalized_tokens
@@ -557,10 +588,15 @@ def normalize_lengthened_words(text: str) -> str:
     # Lớp 1b: Các dấu câu lặp khác thu gọn còn 1 ký tự
     text = re.sub(r'([,;:\)\(\]\[><~\-=])\1+', r' \1 ', text)
 
-    # Lớp 2: cắt chữ cái (Latin + tiếng Việt có dấu) lặp ≥ 3 lần về còn 1
+    # Lớp 2a: cắt chữ cái lặp ≥ 2 lần về còn 1 (ngoại trừ chữ 'o')
     text = re.sub(
-        r'([a-zàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])\1{2,}',
-        r'\1', text
+        r'([a-np-zàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])\1+',
+        r'\1', text, flags=re.IGNORECASE
+    )
+    # Lớp 2b: cắt chữ 'o' lặp ≥ 3 lần về còn 2 (để giữ xoong, coong)
+    text = re.sub(
+        r'(o|ò|ó|ỏ|õ|ọ|ô|ồ|ố|ổ|ỗ|ộ|ơ|ờ|ớ|ở|ỡ|ợ)\1{2,}',
+        r'\1\1', text, flags=re.IGNORECASE
     )
     return text
 
@@ -588,27 +624,12 @@ def replace_slang_and_abbreviations_cased(
 ) -> str:
     """
     Hàm thay thế từ lóng/viết tắt nhưng BẢO TOÀN cấu trúc viết hoa/thường 
-    của các từ ngữ khác trong câu.
+    của các từ ngữ khác trong câu, sử dụng bộ tách từ giữ dấu câu.
     """
-    # Tách từ dựa trên khoảng trắng
-    tokens = text.split()
-    processed_tokens = []
-    
-    for token in tokens:
-        # Lấy dạng lowercase chỉ để dùng làm key tra cứu từ điển
-        token_lower = token.lower()
-        
-        # Ưu tiên tra từ điển viết tắt trước, từ lóng sau
-        if token_lower in abbrev_dict:
-            # Nếu tìm thấy, thay thế bằng định dạng chuẩn của từ điển
-            processed_tokens.append(abbrev_dict[token_lower])
-        elif token_lower in slang_dict:
-            processed_tokens.append(slang_dict[token_lower])
-        else:
-            # NẾU KHÔNG CÓ TRONG TỪ ĐIỂN -> GIỮ NGUYÊN GỐC (Bảo toàn Cased)
-            processed_tokens.append(token)
-            
-    return " ".join(processed_tokens)
+    words = tokenize_keep_punctuation(text)
+    words = apply_lexicon(words, abbrev_dict)
+    words = apply_lexicon(words, slang_dict)
+    return " ".join(words)
 
 
 def replace_compound_words(text: str) -> str:
@@ -618,24 +639,25 @@ def replace_compound_words(text: str) -> str:
     return text
 
 
-def segment_and_remove_stopwords(text: str) -> str:
-    """Bước 7: Phân đoạn từ (underthesea) và loại bỏ từ dừng."""
+def segment_and_remove_stopwords(text: str, remove_stopwords: bool = False) -> str:
+    """Bước 7: Phân đoạn từ (underthesea) và loại bỏ từ dừng nếu remove_stopwords=True."""
     tokenized_text = word_tokenize(text, format="text")
     if isinstance(tokenized_text, list):
         words = tokenized_text
     else:
         words = tokenized_text.split()
-    # words = tokenized_text.split()
 
-    filtered = [
-        w for w in words
-        if not (
-            w.lower() in STOPWORDS
-            and w.lower() not in NEGATION_KEEP_TOKENS
-            and not is_special_token(w)
-        )
-    ]
-    return ' '.join(filtered)
+    if remove_stopwords:
+        filtered = [
+            w for w in words
+            if not (
+                w.lower() in STOPWORDS
+                and w.lower() not in NEGATION_KEEP_TOKENS
+                and not is_special_token(w)
+            )
+        ]
+        return ' '.join(filtered)
+    return ' '.join(words)
 
 
 def run_quick_regression_checks() -> None:
@@ -669,8 +691,8 @@ def run_quick_regression_checks() -> None:
 # PIPELINE & LOGGING
 # ==========================================
 
-def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
-    """Thực thi pipeline 7 bước và in log."""
+def run_pipeline(df: pd.DataFrame, text_column: str, remove_stopwords: bool = False) -> pd.DataFrame:
+    """Thực thi pipeline 8 bước và in log."""
     print("  [1/7] Đồng nhất bảng mã Unicode NFC (fix NFD/mixed)...")
     df['clean_text'] = df[text_column].apply(unicode_normalization)
 
@@ -692,8 +714,8 @@ def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
     print("  [7/8] Gộp từ ghép phổ biến thành token underscore...")
     df['clean_text'] = df['clean_text'].apply(replace_compound_words)
 
-    print("  [8/8] Phân đoạn từ + Loại bỏ Stopwords (mất chút thời gian)...")
-    df['clean_text'] = df['clean_text'].apply(segment_and_remove_stopwords)
+    print(f"  [8/8] Phân đoạn từ (loại bỏ stopwords: {remove_stopwords})...")
+    df['clean_text'] = df['clean_text'].apply(lambda x: segment_and_remove_stopwords(x, remove_stopwords=remove_stopwords))
 
     print("  [*] Dọn khoảng trắng thừa...")
     df['clean_text'] = df['clean_text'].apply(
@@ -702,8 +724,8 @@ def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
     return df
 
 
-def process_dataset(dataset_dir: str | None = None):
-    """Hàm main: đọc origin_tran/dev/test → xử lý → lưu preprocessed_v2_*.csv."""
+def process_dataset(dataset_dir: str | None = None, remove_stopwords: bool = False):
+    """Hàm main: đọc origin_tran/dev/test → xử lý → lưu preprocessed_*.csv."""
     TEXT_COLUMN = 'free_text'
 
     if dataset_dir is None:
@@ -718,13 +740,13 @@ def process_dataset(dataset_dir: str | None = None):
         df_test  = pd.read_csv(os.path.join(dataset_dir, 'origin_test.csv'))
 
         print(f"\n▶ ĐANG XỬ LÝ TẬP TRAIN ({len(df_train)} dòng)...")
-        df_train = run_pipeline(df_train, TEXT_COLUMN)
+        df_train = run_pipeline(df_train, TEXT_COLUMN, remove_stopwords=remove_stopwords)
 
         print(f"\n▶ ĐANG XỬ LÝ TẬP VALIDATION/DEV ({len(df_dev)} dòng)...")
-        df_dev = run_pipeline(df_dev, TEXT_COLUMN)
+        df_dev = run_pipeline(df_dev, TEXT_COLUMN, remove_stopwords=remove_stopwords)
 
         print(f"\n▶ ĐANG XỬ LÝ TẬP TEST ({len(df_test)} dòng)...")
-        df_test = run_pipeline(df_test, TEXT_COLUMN)
+        df_test = run_pipeline(df_test, TEXT_COLUMN, remove_stopwords=remove_stopwords)
 
         print("\n--- ĐANG LƯU KẾT QUẢ ---")
         out_train = os.path.join(dataset_dir, 'preprocessed_train.csv')
@@ -760,9 +782,14 @@ if __name__ == "__main__":
         action='store_true',
         help='Chạy nhanh một bộ regression sample trước khi xử lý dataset'
     )
+    parser.add_argument(
+        '--remove_stopwords',
+        action='store_true',
+        help='Loại bỏ stopwords (mặc định: False để có hiệu năng Transformer tốt nhất)'
+    )
     args = parser.parse_args()
 
     if args.self_test:
         run_quick_regression_checks()
 
-    process_dataset(args.dataset_dir)
+    process_dataset(args.dataset_dir, remove_stopwords=args.remove_stopwords)
