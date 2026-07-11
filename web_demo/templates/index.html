@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hate Speech & Toxic Comment Detection Dashboard</title>
+    <!-- Google Fonts -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap"
+        rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <!-- Background Elements -->
+    <div class="blob blob-purple"></div>
+    <div class="blob blob-blue"></div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="brand">
+                <i class="fa-solid fa-shield-halved brand-logo"></i>
+                <div class="brand-text">
+                    <h1>Nhận diện bình luận xúc phạm & thù địch</h1>
+                </div>
+            </div>
+            <div class="model-selector-wrapper">
+                <div class="custom-dropdown" id="model-dropdown">
+                    <div class="dropdown-trigger" id="dropdown-trigger">
+                        <i class="fa-solid fa-microchip dropdown-trigger-icon"></i>
+                        <span id="dropdown-selected-text">Đang quét model...</span>
+                        <i class="fa-solid fa-chevron-down dropdown-arrow"></i>
+                    </div>
+                    <div class="dropdown-options" id="dropdown-options-list">
+                        <!-- Options injected dynamically by JS -->
+                    </div>
+                </div>
+                <div class="model-badge">
+                    <span class="pulse-indicator"></span>
+                    <span id="model-name-badge">Loading model...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <main class="app-body">
+            <!-- Sidebar Navigation -->
+            <aside class="sidebar-nav">
+                <button class="nav-tab active" data-tab="single">
+                    <i class="fa-solid fa-comment-dots"></i> Phân tích đơn lẻ
+                </button>
+                <button class="nav-tab" data-tab="batch">
+                    <i class="fa-solid fa-file-csv"></i> Xử lý tệp (Batch)
+                </button>
+                <button class="nav-tab" data-tab="stats">
+                    <i class="fa-solid fa-chart-line"></i> Thông số mô hình
+                </button>
+            </aside>
+
+            <!-- Content Area -->
+            <section class="content-viewport">
+                <!-- Single Analysis Tab -->
+                <div class="tab-pane active" id="pane-single">
+                    <div class="grid-layout">
+                        <!-- Input Section -->
+                        <div class="panel panel-input">
+                            <h3 class="panel-title"><i class="fa-solid fa-pen-nib"></i> Nhập bình luận cần đánh giá</h3>
+                            <textarea id="comment-textarea"
+                                placeholder="Nhập bình luận của bạn tại đây... (Ví dụ: thằng ngu này làm cái gì đấy?)"
+                                maxlength="500"></textarea>
+                            <div class="textarea-footer">
+                                <div class="quick-examples">
+                                    <span class="example-title"><i class="fa-solid fa-wand-magic-sparkles"></i> Thử
+                                        nhanh:</span>
+                                    <span class="example-tag tag-clean"
+                                        data-text="Chúc bạn một ngày mới tràn đầy năng lượng và làm việc hiệu quả!">😊
+                                        Sạch</span>
+                                    <span class="example-tag tag-offensive"
+                                        data-text="Cái thằng dở hơi này, nói thế mà cũng nghe được à?">⚠️ Xúc
+                                        phạm</span>
+                                    <span class="example-tag tag-hate"
+                                        data-text="Ghét bọn này thực sự, loại người này nên biến mất khỏi xã hội.">🚫
+                                        Thù địch</span>
+                                </div>
+                                <div class="char-counter"><span id="char-count">0</span>/500</div>
+                            </div>
+                            <div class="input-actions">
+                                <button id="btn-clear" class="btn btn-secondary">Xóa</button>
+                                <button id="btn-analyze" class="btn btn-primary">
+                                    <span id="btn-text">Phân tích</span>
+                                    <span id="btn-spinner" class="spinner hidden"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Result Section -->
+                        <div class="panel panel-result empty" id="single-result-panel">
+                            <div class="empty-state">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                <p>Nhập bình luận và nhấn Phân tích để hiển thị kết quả ngữ nghĩa.</p>
+                            </div>
+
+                            <div class="result-content hidden">
+                                <h3 class="panel-title"><i class="fa-solid fa-square-poll-vertical"></i> Kết quả phân
+                                    loại</h3>
+
+                                <!-- Label Verdict -->
+                                <div class="verdict-banner" id="verdict-banner">
+                                    <div class="verdict-icon" id="verdict-icon"></div>
+                                    <div class="verdict-details">
+                                        <span class="verdict-label">KẾT LUẬN</span>
+                                        <span class="verdict-value" id="verdict-value">-</span>
+                                    </div>
+                                </div>
+
+                                <!-- Highlighted Text -->
+                                <div class="highlighted-box">
+                                    <span class="box-label">Văn bản đánh dấu từ độc hại (Lexicon Match)</span>
+                                    <p id="highlighted-text-p">-</p>
+                                    <div class="detected-words-wrapper hidden" id="detected-words-wrapper">
+                                        <span class="box-label">Từ khóa độc hại phát hiện:</span>
+                                        <div class="detected-tags" id="detected-tags"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Confidence Chart -->
+                                <div class="chart-container">
+                                    <canvas id="confidence-chart"></canvas>
+                                </div>
+
+                                <!-- Meta Features Grid -->
+                                <div class="meta-metrics">
+                                    <h4 class="sub-title">Đặc trưng mật độ ngôn ngữ (Meta Features)</h4>
+                                    <div class="metrics-grid" id="metrics-grid">
+                                        <!-- Dynamic metrics injected here -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Batch Analysis Tab -->
+                <div class="tab-pane" id="pane-batch">
+                    <div class="grid-layout">
+                        <!-- Uploader Panel -->
+                        <div class="panel panel-uploader">
+                            <h3 class="panel-title"><i class="fa-solid fa-cloud-arrow-up"></i> Tải tệp CSV lên hệ thống
+                            </h3>
+                            <div class="drop-zone" id="drop-zone">
+                                <i class="fa-solid fa-file-excel drop-icon"></i>
+                                <p class="drop-text">Kéo thả tệp CSV vào đây hoặc click để duyệt file</p>
+                                <span class="file-hint">Hỗ trợ tệp .csv (có cột chứa nội dung bình luận)</span>
+                                <input type="file" id="csv-file-input" accept=".csv" class="hidden">
+                            </div>
+                            <div class="upload-actions hidden" id="upload-actions">
+                                <span id="selected-file-name">filename.csv</span>
+                                <button id="btn-batch-process" class="btn btn-primary">Bắt đầu xử lý</button>
+                            </div>
+                        </div>
+
+                        <!-- Batch Output Panel -->
+                        <div class="panel panel-batch-result empty" id="batch-result-panel">
+                            <div class="empty-state">
+                                <i class="fa-solid fa-chart-pie"></i>
+                                <p>Tải file lên và bắt đầu chạy để vẽ phân phối phân loại bình luận hàng loạt.</p>
+                            </div>
+
+                            <div class="result-content hidden">
+                                <h3 class="panel-title"><i class="fa-solid fa-chart-column"></i> Kết quả xử lý hàng loạt
+                                </h3>
+
+                                <div class="batch-stats-grid" id="batch-stats-grid">
+                                    <div class="batch-stat-card">
+                                        <span class="stat-label">Tổng bình luận</span>
+                                        <span class="stat-value" id="batch-total">-</span>
+                                    </div>
+                                    <div class="batch-stat-card stat-clean">
+                                        <span class="stat-label">Sạch</span>
+                                        <span class="stat-value" id="batch-clean">-</span>
+                                    </div>
+                                    <div class="batch-stat-card stat-offensive">
+                                        <span class="stat-label">Xúc phạm</span>
+                                        <span class="stat-value" id="batch-offensive">-</span>
+                                    </div>
+                                    <div class="batch-stat-card stat-hate">
+                                        <span class="stat-label">Thù địch</span>
+                                        <span class="stat-value" id="batch-hate">-</span>
+                                    </div>
+                                </div>
+
+                                <div class="batch-summary">
+                                    <div class="download-section">
+                                        <p>Đã xử lý xong toàn bộ dữ liệu trong file CSV!</p>
+                                        <a href="#" id="download-link" class="btn btn-success">
+                                            <i class="fa-solid fa-download"></i> Tải xuống file kết quả (Đã gán nhãn)
+                                        </a>
+                                    </div>
+                                    <div class="batch-chart-wrapper">
+                                        <canvas id="batch-distribution-chart"></canvas>
+                                    </div>
+                                </div>
+                                <div class="table-preview-container">
+                                    <h4 class="sub-title">Bản xem trước dự đoán (10 dòng đầu tiên)</h4>
+                                    <table class="preview-table" id="preview-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Nội dung</th>
+                                                <th>Nhãn dự đoán</th>
+                                                <th>Độ tin cậy</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <!-- Rows dynamic injection -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Model Stats Tab -->
+                <div class="tab-pane" id="pane-stats">
+                    <div class="panel panel-stats">
+                        <div id="stats-loading-overlay" class="loading-overlay hidden">
+                            <div class="spinner-large"></div>
+                            <p>Đang tải mô hình & đánh giá trên tập test (features_test.csv)...</p>
+                        </div>
+                        <h3 class="panel-title"><i class="fa-solid fa-circle-info"></i> Thông số cấu hình & Hiệu năng mô
+                            hình</h3>
+                        <div class="stats-grid">
+                            <div class="stats-card">
+                                <span class="card-label">MÔ HÌNH NỀN TẢNG</span>
+                                <span class="card-value" id="stats-model-name">-</span>
+                            </div>
+                            <div class="stats-card">
+                                <span class="card-label">SỐ EPOCHS HUẤN LUYỆN</span>
+                                <span class="card-value" id="stats-epochs">-</span>
+                            </div>
+                            <div class="stats-card">
+                                <span class="card-label">ĐỘ DÀI TOKEN MAX</span>
+                                <span class="card-value" id="stats-max-len">-</span>
+                            </div>
+                            <div class="stats-card">
+                                <span class="card-label">LEARNING RATE (LR)</span>
+                                <span class="card-value" id="stats-lr">-</span>
+                            </div>
+                        </div>
+
+                        <div class="metrics-academic">
+                            <div class="metric-section">
+                                <h4 class="sub-title">Kết quả đánh giá trên tập kiểm thử UIT-ViHSD</h4>
+                                <table class="academic-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Chỉ số (Metric)</th>
+                                            <th>Giá trị của mô hình</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><strong>Accuracy (Độ chính xác tổng thể)</strong></td>
+                                            <td><span id="stats-accuracy" class="badge badge-success">-</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>F1-macro (Chỉ số F1 trung bình)</strong></td>
+                                            <td><span id="stats-f1" class="badge badge-primary">-</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="metric-section">
+                                <h4 class="sub-title">Confusion Matrix (Ma trận nhầm lẫn)</h4>
+                                <table class="academic-table confusion-matrix-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Thực tế (Origin) \ Dự đoán</th>
+                                            <th>Prediction_0 (Sạch)</th>
+                                            <th>Prediction_1 (Xúc phạm)</th>
+                                            <th>Prediction_2 (Thù địch)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><strong>Origin_0 (Sạch)</strong></td>
+                                            <td id="cm-0-0" class="diag">-</td>
+                                            <td id="cm-0-1" class="miss">-</td>
+                                            <td id="cm-0-2" class="miss">-</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Origin_1 (Xúc phạm)</strong></td>
+                                            <td id="cm-1-0" class="miss">-</td>
+                                            <td id="cm-1-1" class="diag">-</td>
+                                            <td id="cm-1-2" class="miss">-</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Origin_2 (Thù địch)</strong></td>
+                                            <td id="cm-2-0" class="miss">-</td>
+                                            <td id="cm-2-1" class="miss">-</td>
+                                            <td id="cm-2-2" class="diag">-</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            Đột phá xử lý tiếng Việt lệch nhãn trên mạng xã hội.</p>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
