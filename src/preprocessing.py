@@ -160,13 +160,17 @@ def replace_compound_words(text: str) -> str:
         text = pattern.sub(replacement, text)
     return text
 
-def segment_and_remove_stopwords(text: str) -> str:
-    """Bước 7: Phân đoạn từ (underthesea) và loại bỏ từ dừng."""
+def segment_text(text: str, remove_stopwords: bool = True) -> str:
+    """Phân đoạn từ (underthesea), có thể bật/tắt loại bỏ stopwords."""
     tokenized_text = word_tokenize(text, format="text")
     if isinstance(tokenized_text, list):
         words = tokenized_text
     else:
         words = tokenized_text.split()
+
+    if not remove_stopwords:
+        return ' '.join(words)
+
     filtered = [
         w for w in words
         if not (
@@ -176,7 +180,7 @@ def segment_and_remove_stopwords(text: str) -> str:
     ]
     return ' '.join(filtered)
 
-def run_quick_regression_checks() -> None:
+def run_quick_regression_checks(remove_stopwords: bool = True) -> None:
     """Self-test nhanh cho các ca social text dễ tách sai."""
     samples = [
         "Ko??? dcm!!!",
@@ -196,7 +200,7 @@ def run_quick_regression_checks() -> None:
         text = normalize_lengthened_words(text)
         text = replace_slang_and_abbreviations_cased(text)
         text = replace_compound_words(text)
-        text = segment_and_remove_stopwords(text)
+        text = segment_text(text, remove_stopwords=remove_stopwords)
         text = re.sub(r'\s+', ' ', text).strip()
 
         print(f"[{idx}] IN : {sample}")
@@ -207,7 +211,7 @@ def run_quick_regression_checks() -> None:
 # PIPELINE & LOGGING
 # ==========================================
 
-def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
+def run_pipeline(df: pd.DataFrame, text_column: str, remove_stopwords: bool = True) -> pd.DataFrame:
     """Thực thi pipeline 7 bước và in log."""
     print("  [1/7] Đồng nhất bảng mã Unicode NFC (fix NFD/mixed)...")
     df['clean_text'] = df[text_column].apply(unicode_normalization)
@@ -227,8 +231,13 @@ def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
     print("  [6/7] Gộp từ ghép phổ biến thành token underscore...")
     df['clean_text'] = df['clean_text'].apply(replace_compound_words)
 
-    print("  [7/7] Phân đoạn từ + Loại bỏ Stopwords (mất chút thời gian)...")
-    df['clean_text'] = df['clean_text'].apply(segment_and_remove_stopwords)
+    if remove_stopwords:
+        print("  [7/7] Phân đoạn từ + Loại bỏ Stopwords (mất chút thời gian)...")
+    else:
+        print("  [7/7] Phân đoạn từ (Giữ nguyên stopwords)...")
+    df['clean_text'] = df['clean_text'].apply(
+        lambda x: segment_text(x, remove_stopwords=remove_stopwords)
+    )
 
     print("  [*] Dọn khoảng trắng thừa...")
     df['clean_text'] = df['clean_text'].apply(
@@ -237,7 +246,7 @@ def run_pipeline(df: pd.DataFrame, text_column: str) -> pd.DataFrame:
     return df
 
 
-def process_dataset(dataset_dir: str | None = None):
+def process_dataset(dataset_dir: str | None = None, remove_stopwords: bool = True):
     """Hàm main: đọc origin_tran/dev/test → xử lý → lưu preprocessed_v2_*.csv."""
     TEXT_COLUMN = 'free_text'
 
@@ -253,13 +262,13 @@ def process_dataset(dataset_dir: str | None = None):
         df_test  = pd.read_csv(os.path.join(dataset_dir, 'origin_test.csv'))
 
         print(f"\n▶ ĐANG XỬ LÝ TẬP TRAIN ({len(df_train)} dòng)...")
-        df_train = run_pipeline(df_train, TEXT_COLUMN)
+        df_train = run_pipeline(df_train, TEXT_COLUMN, remove_stopwords=remove_stopwords)
 
         print(f"\n▶ ĐANG XỬ LÝ TẬP VALIDATION/DEV ({len(df_dev)} dòng)...")
-        df_dev = run_pipeline(df_dev, TEXT_COLUMN)
+        df_dev = run_pipeline(df_dev, TEXT_COLUMN, remove_stopwords=remove_stopwords)
 
         print(f"\n▶ ĐANG XỬ LÝ TẬP TEST ({len(df_test)} dòng)...")
-        df_test = run_pipeline(df_test, TEXT_COLUMN)
+        df_test = run_pipeline(df_test, TEXT_COLUMN, remove_stopwords=remove_stopwords)
 
         print("\n--- ĐANG LƯU KẾT QUẢ ---")
         out_train = os.path.join(dataset_dir, 'preprocessed_train.csv')
@@ -295,9 +304,15 @@ if __name__ == "__main__":
         action='store_true',
         help='Chạy nhanh một bộ regression sample trước khi xử lý dataset'
     )
+    parser.add_argument(
+        '--remove_stopwords',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help='Bật/tắt loại bỏ stopwords ở bước phân đoạn từ (mặc định: bật)'
+    )
     args = parser.parse_args()
 
     if args.self_test:
-        run_quick_regression_checks()
+        run_quick_regression_checks(remove_stopwords=args.remove_stopwords)
 
-    process_dataset(args.dataset_dir)
+    process_dataset(args.dataset_dir, remove_stopwords=args.remove_stopwords)
