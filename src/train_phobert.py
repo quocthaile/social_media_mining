@@ -22,11 +22,16 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 
 DEFAULT_TEXT_COLUMN = "tokens_text"  # Mặc định PhoBERT dùng text CÓ gạch dưới
 DEFAULT_FEATURE_COLUMNS = [
-    "feat_log_num_tokens",      # [Kích thước] Dấu hiệu của bài viết lập luận / thù ghét dài
-    "feat_punct_density",       # [Cấu trúc] Dấu hiệu của sự phẫn nộ, hỗn loạn
-    "feat_upper_ratio",         # [Cấu trúc] Dấu hiệu la hét (CAPSLOCK)
-    "feat_bad_word_density",    # [Từ vựng] Tín hiệu chửi tục / thoá mạ (Đã đánh trọng số)
-    "feat_aggressive_pronoun",  # [Từ vựng] Tín hiệu công kích cá nhân
+    "feat_log_num_tokens",        
+    "feat_upper_ratio",           
+    "feat_emoji_density",         
+    "feat_bad_word_density",      
+    "feat_aggressive_pronoun",    
+    "feat_laugh_density",         
+    "feat_sarcastic_punct",       
+    "feat_scare_quotes",          
+    "feat_intensifier_words",     
+    "feat_elongated_ratio",       
 ]
 
 def debug(msg: str) -> None:
@@ -196,7 +201,6 @@ def train_one_epoch(model, loader, optimizer, scheduler, device):
 
     return total_loss / len(loader.dataset)
 
-
 @torch.no_grad()
 def evaluate(model, loader, device):
     model.eval()
@@ -211,25 +215,24 @@ def evaluate(model, loader, device):
         loss = outputs.loss
         logits = outputs.logits
         
-        # BỔ SUNG: THRESHOLD MOVING
-        # probs = torch.softmax(logits, dim=1)
-        # batch_preds = []
-        # for p in probs:
-        #     # Nhãn 2 (Thù địch): Giữ mốc 0.25
-        #     if p[2] > 0.25:
-        #         batch_preds.append(2)
-        #     # Nhãn 1 (Xúc phạm): Hạ mốc xuống 0.15
-        #     elif p[1] > 0.15:
-        #         batch_preds.append(1)
-        #     else:
-        #         batch_preds.append(torch.argmax(p).item())
-        preds = torch.argmax(logits, dim=1)
+        # --- BẬT LẠI THRESHOLD MOVING ---
+        probs = torch.softmax(logits, dim=1)
+        batch_preds = []
+        for p in probs:
+            if p[2] > 0.30:        # Mốc Thù địch: 30%
+                batch_preds.append(2)
+            elif p[1] > 0.25:      # Mốc Xúc phạm: 25%
+                batch_preds.append(1)
+            else:
+                batch_preds.append(torch.argmax(p).item())
                 
-        # preds = torch.tensor(batch_preds)
+        preds = torch.tensor(batch_preds)
+        # --------------------------------
 
         total_loss += loss.item() * batch["labels"].size(0)
         y_true.extend(batch["labels"].cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
+        
         if batch_idx % 20 == 0 or batch_idx == len(loader):
             debug(f"Eval batch {batch_idx}/{len(loader)}")
 

@@ -13,13 +13,18 @@ from torch.utils.data import Dataset, DataLoader
 PAD_TOKEN = "<pad>"
 UNK_TOKEN = "<unk>"
 
-DEFAULT_TEXT_COLUMN = "transformer_text"
+DEFAULT_TEXT_COLUMN = "tokens_text"
 DEFAULT_FEATURE_COLUMNS = [
-    "feat_log_num_tokens",      # [Kích thước] Dấu hiệu của bài viết lập luận / thù ghét dài
-    "feat_punct_density",       # [Cấu trúc] Dấu hiệu của sự phẫn nộ, hỗn loạn
-    "feat_upper_ratio",         # [Cấu trúc] Dấu hiệu la hét (CAPSLOCK)
-    "feat_bad_word_density",    # [Từ vựng] Tín hiệu chửi tục / thoá mạ (Đã đánh trọng số)
-    "feat_aggressive_pronoun",  # [Từ vựng] Tín hiệu công kích cá nhân
+    "feat_log_num_tokens",        
+    "feat_upper_ratio",           
+    "feat_emoji_density",         
+    "feat_bad_word_density",      
+    "feat_aggressive_pronoun",    
+    "feat_laugh_density",         
+    "feat_sarcastic_punct",       
+    "feat_scare_quotes",          
+    "feat_intensifier_words",     
+    "feat_elongated_ratio",       
 ]
 
 
@@ -265,8 +270,18 @@ def evaluate(model, loader, criterion, device):
         logits = model(x, meta)
         loss = criterion(logits, y)
 
-        # ĐƯA VỀ LẠI ARGMAX BÌNH THƯỜNG
-        preds = torch.argmax(logits, dim=1) 
+        # THRESHOLD MOVING: Bắt tín hiệu mỉa mai/thù ghét ở ngưỡng thấp
+        probs = torch.softmax(logits, dim=1)
+        preds = []
+        for p in probs:
+            if p[2] > 0.30:        # Ngưỡng Thù địch
+                preds.append(2)
+            elif p[1] > 0.25:      # Ngưỡng Xúc phạm
+                preds.append(1)
+            else:
+                preds.append(torch.argmax(p).item()) 
+                
+        preds = torch.tensor(preds)
         
         total_loss += loss.item() * x.size(0)
         y_true.extend(y.cpu().tolist())
@@ -381,14 +396,14 @@ def parse_args():
     parser.add_argument("--hidden_size", type=int, default=128)
     parser.add_argument("--num_layers", type=int, default=1)
     parser.add_argument("--bidirectional", action="store_true")
-    parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument("--dropout", type=float, default=0.4)
 
-    parser.add_argument("--batch_size", type=int, default=100)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--patience", type=int, default=3)
+    parser.add_argument("--patience", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--meta_hidden_size", type=int, default=32)
+    parser.add_argument("--meta_hidden_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument(
         "--output_dir",

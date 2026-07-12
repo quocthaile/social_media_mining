@@ -94,3 +94,39 @@ kaggle datasets create -p .
     --lr 3e-5 \
     --epochs 5 \
     --num_workers 2
+
+
+
+    TextCNN
+    !python /kaggle/input/datasets/thaile2024/optimize-transformer/train_textcnn.py \
+    --data_dir /kaggle/input/datasets/thaile2024/optimize-transformer \
+    --output_dir /kaggle/working/models/textcnn/ver_optimal_features \
+    --text_column tokens_text \
+    --batch_size 64 \
+    --max_len 128 \
+    --num_filters 128 \
+    --kernel_sizes 3,4,5 \
+    --embed_dim 300 \
+    --meta_hidden_size 64 \
+    --dropout 0.5 \
+    --lr 5e-4 \
+    --epochs 15 \
+    --patience 3
+
+
+    GRU
+    !python /kaggle/input/datasets/thaile2024/optimize-transformer/train_gru.py \
+    --data_dir /kaggle/input/datasets/thaile2024/optimize-transformer \
+    --output_dir /kaggle/working/models/gru/ver_optimal_features \
+    --text_column tokens_text \
+    --batch_size 64 \
+    --max_len 128 \
+    --hidden_size 128 \
+    --num_layers 1 \
+    --bidirectional \
+    --embed_dim 300 \
+    --meta_hidden_size 64 \
+    --dropout 0.4 \
+    --lr 1e-3 \
+    --epochs 15 \
+    --patience 4
