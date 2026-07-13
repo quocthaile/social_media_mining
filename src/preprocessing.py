@@ -42,10 +42,37 @@ COMPOUND_PATTERNS = [
 # CÁC HÀM TIỀN XỬ LÝ
 # ==========================================
 
+VIETNAMESE_ACCENT_REPLACEMENTS = {
+    "oà": "òa", "oá": "óa", "oả": "ỏa", "oã": "õa", "oạ": "ọa",
+    "oè": "òe", "oé": "óe", "oẻ": "ỏe", "oẽ": "õe", "oẹ": "ọe",
+    "uỳ": "ùy", "uý": "úy", "uỷ": "ủy", "uỹ": "ũy", "uỵ": "ụy",
+    "hoà": "hòa", "hoá": "hóa", "hoả": "hỏa", "hoã": "hõa", "hoạ": "họa",
+    "toà": "tòa", "toá": "tóa", "toả": "tỏa", "toã": "tõa", "toạ": "tọa",
+    "loà": "lòa", "loá": "lóa", "loả": "lỏa", "loã": "lõa", "loạ": "lọa",
+    "xoà": "xòa", "xoá": "xóa", "xoả": "xỏa", "xoã": "xõa", "xoạ": "xọa",
+    "đoà": "đòa", "đoá": "đóa", "đoả": "đỏa", "đoã": "đõa", "đoạ": "đọa",
+    "khoà": "khòa", "khoá": "khóa", "khoả": "khỏa", "khoã": "khõa", "khoạ": "khọa",
+    "ngoà": "ngòa", "ngoá": "ngóa", "ngoả": "ngỏa", "ngoã": "ngõa", "ngoạ": "ngọa",
+    "thoà": "thòa", "thoá": "thóa", "thoả": "thỏa", "thoã": "thõa", "thoạ": "thọa",
+    "thuỷ": "thủy", "thuý": "thúy", "thuỳ": "thùy", "thuỹ": "thũy", "thuỵ": "thụy",
+    "huỷ": "hủy", "huý": "húy", "huỳ": "hùy", "huỹ": "hũy", "huỵ": "hụy",
+    "luỷ": "lủy", "luý": "lúy", "luỳ": "lùy", "luỹ": "lũy", "luỵ": "lụy",
+}
+
+def normalize_vietnamese_accents(text: str) -> str:
+    """Chuẩn hóa kiểu gõ dấu cũ sang mới (hoà -> hòa, uý -> úy)."""
+    for old, new in VIETNAMESE_ACCENT_REPLACEMENTS.items():
+        text = text.replace(old, new)
+        text = text.replace(old.upper(), new.upper())
+        text = text.replace(old.capitalize(), new.capitalize())
+    return text
+
 def unicode_normalization(text: str) -> str:
     if not isinstance(text, str):
         return ""
-    return unicodedata.normalize('NFC', text)
+    text = unicodedata.normalize('NFC', text)
+    text = normalize_vietnamese_accents(text)
+    return text
 
 def remove_noise(text: str) -> str:
     text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
@@ -69,8 +96,12 @@ def apply_lexicon(tokens: list[str], lexicon: dict[str, str]) -> list[str]:
     normalized_tokens = []
     for token in tokens:
         if is_word_token(token) and not is_special_token(token):
-            replacement = lexicon.get(token, token)
-            normalized_tokens.extend(replacement.split())
+            token_lower = token.lower()
+            replacement = lexicon.get(token_lower, token)
+            if replacement == token:
+                normalized_tokens.append(token)
+            else:
+                normalized_tokens.extend(replacement.split())
         else:
             normalized_tokens.append(token)
     return normalized_tokens
