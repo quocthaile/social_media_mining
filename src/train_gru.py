@@ -15,16 +15,16 @@ UNK_TOKEN = "<unk>"
 
 DEFAULT_TEXT_COLUMN = "tokens_text"
 DEFAULT_FEATURE_COLUMNS = [
-    "feat_log_num_tokens",
-    "feat_log_num_chars",
-    "feat_avg_token_len",
-    "feat_emoji_density",
-    "feat_punct_density",
-    "feat_upper_ratio",
-    "feat_digit_ratio",
-    "feat_bad_word_density",      # <--- BỔ SUNG: Rất quan trọng cho nhãn OFFENSIVE/HATE
-    "feat_exclamation_density",  # <--- BỔ SUNG: Biểu thị sắc thái kích động
-    "feat_allcaps_ratio"            # <--- BỔ SUNG: Biểu thị la hét/chửi bới
+    "feat_log_num_tokens",        
+    "feat_upper_ratio",           
+    "feat_emoji_density",         
+    "feat_bad_word_density",      
+    "feat_aggressive_pronoun",    
+    "feat_laugh_density",         
+    "feat_sarcastic_punct",       
+    "feat_scare_quotes",          
+    "feat_intensifier_words",     
+    "feat_elongated_ratio",       
 ]
 
 
@@ -42,23 +42,6 @@ def set_seed(seed: int) -> None:
 def get_default_data_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dataset-vihsd"))
 
-
-# def load_split(csv_path: str, text_column: str, feature_columns):
-#     df = pd.read_csv(csv_path, encoding="utf-8-sig")
-#     required_cols = {text_column, "label_id", *feature_columns}
-#     if not required_cols.issubset(df.columns):
-#         raise ValueError(f"{csv_path} must contain columns: {required_cols}")
-
-#     texts = df[text_column].fillna("").astype(str).tolist()
-#     meta_features = (
-#         df[feature_columns]
-#         .apply(pd.to_numeric, errors="coerce")
-#         .fillna(0.0)
-#         .astype(np.float32)
-#         .values
-#     )
-#     labels = pd.to_numeric(df["label_id"], errors="raise").astype(int).tolist()
-#     return df, texts, meta_features, labels
 def load_split(csv_path: str, text_column: str, feature_columns):
     df = pd.read_csv(csv_path, encoding="utf-8-sig")
     required_cols = {text_column, "label_id", *feature_columns}
@@ -92,20 +75,16 @@ def create_label_mapping(*label_lists):
     id2label = {idx: label for label, idx in label2id.items()}
     return label2id, id2label
 
-
 def encode_labels(labels, label2id):
     return [label2id[label] for label in labels]
 
-
 def tokenize(text: str):
     return text.split()
-
 
 def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
     counter = Counter()
     for text in train_texts:
         counter.update(tokenize(text))
-
     vocab = {PAD_TOKEN: 0, UNK_TOKEN: 1}
     for token, freq in counter.most_common():
         if freq < min_freq:
@@ -115,30 +94,23 @@ def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
         vocab[token] = len(vocab)
     return vocab
 
-
 def load_fasttext_vectors(vec_path: str, vocab=None):
-    """Tải file FastText (.vec) vào bộ nhớ dưới dạng dictionary."""
-    debug(f"Đang tải FastText vectors từ {vec_path} (Quá trình này có thể mất vài phút)...")
+    debug(f"Đang tải FastText vectors từ {vec_path}...")
     embeddings_dict = {}
     with open(vec_path, "r", encoding="utf-8") as f:
         first_line = f.readline().split()
         if len(first_line) != 2:
             f.seek(0)
-
         for line in f:
             values = line.rstrip().split(" ")
             word = values[0]
             word_lower = word.lower()
-
             if vocab is not None and word_lower not in vocab:
                 continue
-
             vector = np.asarray(values[1:], dtype="float32")
             embeddings_dict[word_lower] = vector
-
     debug(f"Đã tải thành công {len(embeddings_dict)} vector từ vựng.")
     return embeddings_dict
-
 
 def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
     """Ánh xạ FastText vectors vào vocab của model."""
@@ -170,13 +142,11 @@ def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
     debug(f"Tỷ lệ khớp FastText: {hits}/{vocab_size} từ ({(hits / vocab_size) * 100:.2f}%).")
     return torch.tensor(embedding_matrix, dtype=torch.float32)
 
-
 def encode_text(text, vocab, max_len):
     token_ids = [vocab.get(tok, vocab[UNK_TOKEN]) for tok in tokenize(text)[:max_len]]
     if len(token_ids) < max_len:
         token_ids += [vocab[PAD_TOKEN]] * (max_len - len(token_ids))
     return token_ids
-
 
 class TextDataset(Dataset):
     def __init__(self, texts, meta_features, labels, vocab, max_len):
@@ -192,7 +162,6 @@ class TextDataset(Dataset):
         meta = torch.tensor(self.meta_features[idx], dtype=torch.float)
         y = torch.tensor(self.labels[idx], dtype=torch.long)
         return x, meta, y
-
 
 class GRUClassifier(nn.Module):
     def __init__(
@@ -246,7 +215,7 @@ class GRUClassifier(nn.Module):
                 
                 # BƯỚC 2: Chiếu qua lớp Linear để học mối tương quan
                 nn.Linear(num_meta_features, meta_hidden_size),
-                nn.ReLU(),
+                nn.SiLU(),
                 nn.Dropout(dropout),
             )
             out_dim = out_dim + meta_hidden_size
@@ -296,37 +265,28 @@ def evaluate(model, loader, criterion, device):
     model.eval()
     total_loss = 0.0
     y_true, y_pred = [], []
-    debug(f"Evaluating with {len(loader)} batches")
-
     for batch_idx, (x, meta, y) in enumerate(loader, start=1):
         x, meta, y = x.to(device), meta.to(device), y.to(device)
         logits = model(x, meta)
         loss = criterion(logits, y)
 
-        # preds = torch.argmax(logits, dim=1)
-        # BỔ SUNG THRESHOLD MOVING
+        # THRESHOLD MOVING: Bắt tín hiệu mỉa mai/thù ghét ở ngưỡng thấp
         probs = torch.softmax(logits, dim=1)
         preds = []
         for p in probs:
-            # p[0] là Sạch, p[1] là Xúc phạm, p[2] là Thù địch
-            # Nếu xác suất Thù địch > 0.25 -> Chọn Thù địch (không cần đợi tới > 0.33)
-            if p[2] > 0.25:
+            if p[2] > 0.30:        # Ngưỡng Thù địch
                 preds.append(2)
-            # Nếu xác suất Xúc phạm > 0.25 -> Chọn Xúc phạm
-            elif p[1] > 0.25:
+            elif p[1] > 0.25:      # Ngưỡng Xúc phạm
                 preds.append(1)
             else:
-                preds.append(torch.argmax(p).item()) # Quay về argmax nếu ko đạt ngưỡng
+                preds.append(torch.argmax(p).item()) 
                 
         preds = torch.tensor(preds)
+        
         total_loss += loss.item() * x.size(0)
         y_true.extend(y.cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
-        if batch_idx % 50 == 0 or batch_idx == len(loader):
-            debug(f"Eval batch {batch_idx}/{len(loader)}")
-
     return total_loss / len(loader.dataset), y_true, y_pred
-
 
 def print_confusion_and_scores(y_true, y_pred, id2label):
     label_ids = list(range(len(id2label)))
@@ -426,7 +386,7 @@ def parse_args():
     parser.add_argument("--min_freq", type=int, default=1)
     parser.add_argument("--max_len", type=int, default=128)
 
-    parser.add_argument("--embed_dim", type=int, default=200)
+    parser.add_argument("--embed_dim", type=int, default=300)
     parser.add_argument(
         "--fasttext_path",
         type=str,
@@ -436,14 +396,14 @@ def parse_args():
     parser.add_argument("--hidden_size", type=int, default=128)
     parser.add_argument("--num_layers", type=int, default=1)
     parser.add_argument("--bidirectional", action="store_true")
-    parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument("--dropout", type=float, default=0.4)
 
-    parser.add_argument("--batch_size", type=int, default=100)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--patience", type=int, default=3)
+    parser.add_argument("--patience", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--meta_hidden_size", type=int, default=32)
+    parser.add_argument("--meta_hidden_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument(
         "--output_dir",

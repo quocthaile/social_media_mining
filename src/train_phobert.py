@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import AdamW
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from sklearn.metrics import confusion_matrix, accuracy_score, f1_score
 from transformers import (
     AutoTokenizer,
@@ -20,20 +20,19 @@ from transformers import (
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 
-# DEFAULT_TEXT_COLUMN = "transformer_text"
+DEFAULT_TEXT_COLUMN = "tokens_text"  # Mặc định PhoBERT dùng text CÓ gạch dưới
 DEFAULT_FEATURE_COLUMNS = [
-    "feat_log_num_tokens",
-    "feat_log_num_chars",
-    "feat_avg_token_len",
-    "feat_emoji_density",
-    "feat_punct_density",
-    "feat_upper_ratio",
-    "feat_digit_ratio",
-    "feat_bad_word_density",      # <--- BỔ SUNG: Rất quan trọng cho nhãn OFFENSIVE/HATE
-    "feat_exclamation_density",  # <--- BỔ SUNG: Biểu thị sắc thái kích động
-    "feat_allcaps_ratio" 
+    "feat_log_num_tokens",        
+    "feat_upper_ratio",           
+    "feat_emoji_density",         
+    "feat_bad_word_density",      
+    "feat_aggressive_pronoun",    
+    "feat_laugh_density",         
+    "feat_sarcastic_punct",       
+    "feat_scare_quotes",          
+    "feat_intensifier_words",     
+    "feat_elongated_ratio",       
 ]
-
 
 def debug(msg: str) -> None:
     print(f"[DEBUG][Transformer] {msg}")
@@ -114,7 +113,8 @@ class TransformerWithMetaFeatures(nn.Module):
         num_labels: int,
         num_meta_features: int,
         feature_hidden_size: int,
-        dropout: float,
+        text_dropout: float, # Thêm tham số
+        feature_dropout: float, # Thêm tham số
         id2label=None,
         label2id=None,
     ):
@@ -122,12 +122,12 @@ class TransformerWithMetaFeatures(nn.Module):
         self.encoder = AutoModel.from_pretrained(model_name)
         encoder_hidden_size = self.encoder.config.hidden_size
 
-        self.text_dropout = nn.Dropout(dropout)
+        self.text_dropout = nn.Dropout(text_dropout) # Gán text_dropout
         self.meta_proj = nn.Sequential(
-            nn.LayerNorm(num_meta_features),
+            nn.BatchNorm1d(num_meta_features), # Đổi LayerNorm thành BatchNorm1d
             nn.Linear(num_meta_features, feature_hidden_size),
-            nn.GELU(),
-            nn.Dropout(dropout),
+            nn.SiLU(),
+            nn.Dropout(feature_dropout),
         )
         self.classifier = nn.Linear(encoder_hidden_size + feature_hidden_size, num_labels)
 
@@ -153,15 +153,6 @@ class TransformerWithMetaFeatures(nn.Module):
             encoder_inputs["token_type_ids"] = token_type_ids
 
         outputs = self.encoder(**encoder_inputs)
-        # Always take the raw [CLS] token embedding from the last hidden state
-        # instead of the encoder's own pooler_output. RoBERTa-family models
-        # (BamiBERT, PhoBERT) are pre-trained without a next-sentence-prediction
-        # objective, so their pooler weights are either absent from the released
-        # checkpoint or never actually trained (randomly initialized). Using the
-        # raw CLS embedding avoids depending on that untrained layer and matches
-        # HuggingFace's own RobertaForSequenceClassification behavior. It also
-        # keeps pooling consistent across all encoders used in this script,
-        # including DistilBERT (which has no pooler_output at all).
         pooled_output = outputs.last_hidden_state[:, 0, :]
 
         text_repr = self.text_dropout(pooled_output)
@@ -178,8 +169,13 @@ class TransformerWithMetaFeatures(nn.Module):
 
         loss = None
         if labels is not None:
-            loss = F.cross_entropy(logits, labels)
-
+            # Tần suất dựa trên phân tích: Lớp 0 (82.7%), Lớp 1 (6.68%), Lớp 2 (10.63%)
+            # Chuẩn hóa về trung bình = 1
+            device = logits.device
+            class_weights = torch.tensor([1/0.827, 1/0.0668, 1/0.1063]).to(device)
+            class_weights = class_weights / class_weights.sum() * 3
+            
+            loss = F.cross_entropy(logits, labels, weight=class_weights)
         return SequenceClassifierOutput(loss=loss, logits=logits)
 
 
@@ -205,7 +201,6 @@ def train_one_epoch(model, loader, optimizer, scheduler, device):
 
     return total_loss / len(loader.dataset)
 
-
 @torch.no_grad()
 def evaluate(model, loader, device):
     model.eval()
@@ -219,11 +214,25 @@ def evaluate(model, loader, device):
 
         loss = outputs.loss
         logits = outputs.logits
-        preds = torch.argmax(logits, dim=1)
+        
+        # --- BẬT LẠI THRESHOLD MOVING ---
+        probs = torch.softmax(logits, dim=1)
+        batch_preds = []
+        for p in probs:
+            if p[2] > 0.30:        # Mốc Thù địch: 30%
+                batch_preds.append(2)
+            elif p[1] > 0.25:      # Mốc Xúc phạm: 25%
+                batch_preds.append(1)
+            else:
+                batch_preds.append(torch.argmax(p).item())
+                
+        preds = torch.tensor(batch_preds)
+        # --------------------------------
 
         total_loss += loss.item() * batch["labels"].size(0)
         y_true.extend(batch["labels"].cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
+        
         if batch_idx % 20 == 0 or batch_idx == len(loader):
             debug(f"Eval batch {batch_idx}/{len(loader)}")
 
@@ -267,6 +276,33 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
     f1_macro = f1_score(y_true, y_pred, average="macro")
     print(f"\nAccuracy: {acc:.4f}")
     print(f"F1-macro: {f1_macro:.4f}")
+    # print(f"\nAccuracy: {acc:.4f}")
+    # print(f"F1-macro: {f1_macro:.4f}")
+    
+    # THÊM DÒNG NÀY VÀO CUỐI HÀM
+    return cm_df, pd.DataFrame(rows), acc, f1_macro
+
+def save_evaluation_artifacts(
+    output_dir, split_df, y_true, y_pred, id2label,
+    confusion_matrix_file, ovr_metrics_file, misclassified_file
+):
+    cm_df, ovr_df, acc, f1_macro = print_confusion_and_scores(y_true, y_pred, id2label)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    cm_path = os.path.join(output_dir, confusion_matrix_file)
+    ovr_path = os.path.join(output_dir, ovr_metrics_file)
+    mis_path = os.path.join(output_dir, misclassified_file)
+
+    cm_df.to_csv(cm_path, encoding="utf-8-sig")
+    ovr_df.to_csv(ovr_path, index=False, encoding="utf-8-sig")
+
+    eval_df = split_df.reset_index(drop=True).copy()
+    eval_df["label_id_true"] = [id2label[i] for i in y_true]
+    eval_df["label_id_pred"] = [id2label[i] for i in y_pred]
+    eval_df["is_misclassified"] = eval_df["label_id_true"] != eval_df["label_id_pred"]
+
+    mis_df = eval_df[eval_df["is_misclassified"]].copy()
+    mis_df.to_csv(mis_path, index=False, encoding="utf-8-sig")
 
 
 def parse_feature_columns(raw: str):
@@ -297,17 +333,21 @@ def run_experiment(
     
     parser.add_argument("--feature_columns", type=str, default=",".join(DEFAULT_FEATURE_COLUMNS))
     parser.add_argument("--max_len", type=int, default=128)
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--batch_size", type=int, default=32) # Tăng từ 16 lên 32
+    parser.add_argument("--epochs", type=int, default=10)     # Tăng từ 3 lên 10
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--feature_hidden_size", type=int, default=64)
-    parser.add_argument("--feature_dropout", type=float, default=0.2)
+    parser.add_argument("--feature_hidden_size", type=int, default=32) # Giảm từ 64 xuống 32
+    parser.add_argument("--text_dropout", type=float, default=0.1)     # Thêm mới
+    parser.add_argument("--feature_dropout", type=float, default=0.3)  # Tăng từ 0.2 lên 0.3
     parser.add_argument("--warmup_ratio", type=float, default=0.1)
-    parser.add_argument("--patience", type=int, default=2)
+    parser.add_argument("--patience", type=int, default=3)    # Tăng từ 2 lên 3
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--output_dir", type=str, default=get_default_output_dir(default_output_subdir))
+    parser.add_argument("--confusion_matrix_file", type=str, default="confusion_matrix_test.csv")
+    parser.add_argument("--ovr_metrics_file", type=str, default="ovr_metrics_test.csv")
+    parser.add_argument("--misclassified_file", type=str, default="misclassified_test.csv")
     args = parser.parse_args()
     feature_columns = parse_feature_columns(args.feature_columns)
 
@@ -333,6 +373,7 @@ def run_experiment(
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
+    test_df = pd.read_csv(os.path.join(args.data_dir, args.test_file), encoding="utf-8-sig")
     debug(
         f"Loaded rows | train={len(train_texts)}, dev={len(dev_texts)}, test={len(test_texts)}"
     )
@@ -344,11 +385,6 @@ def run_experiment(
     debug(f"Label mapping: {label2id}")
 
     if "bamibert" in args.model_name.lower():
-        # BamiBERT's tokenizer_config.json incorrectly declares tokenizer_class
-        # as XLMRobertaTokenizer (SentencePiece-based), but the repo actually
-        # ships a byte-level BPE tokenizer.json (extended from PhoGPT's
-        # tokenizer). Loading via AutoTokenizer dispatches to the wrong class
-        # and crashes, so load the fast tokenizer file directly instead.
         debug(f"Loading tokenizer: {args.model_name} (PreTrainedTokenizerFast, bypassing AutoTokenizer)")
         tokenizer = PreTrainedTokenizerFast.from_pretrained(args.model_name)
     else:
@@ -361,8 +397,24 @@ def run_experiment(
     dev_ds = TransformerDataset(dev_texts, dev_meta, dev_labels, tokenizer, args.max_len)
     test_ds = TransformerDataset(test_texts, test_meta, test_labels, tokenizer, args.max_len)
 
+# Tính toán trọng số lấy mẫu cho từng dòng dữ liệu trong tập Train
+    # class_sample_counts = np.bincount(train_labels)
+    # class_weights_sampler = 1. / class_sample_counts
+    # sample_weights = np.array([class_weights_sampler[t] for t in train_labels])
+    # sample_weights = torch.from_numpy(sample_weights).double()
+    
+    # Tạo Sampler thay cho việc Shuffle mặc định
+    # sampler = WeightedRandomSampler(
+    #     weights=sample_weights,
+    #     num_samples=len(sample_weights),
+    #     replacement=True
+    # )
+
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
+        train_ds, 
+        batch_size=args.batch_size, 
+        shuffle=True, # Bật lại shuffle tự nhiên
+        num_workers=args.num_workers
     )
     dev_loader = DataLoader(
         dev_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
@@ -384,7 +436,8 @@ def run_experiment(
         num_labels=num_labels,
         num_meta_features=len(feature_columns),
         feature_hidden_size=args.feature_hidden_size,
-        dropout=args.feature_dropout,
+        text_dropout=args.text_dropout,       # Cập nhật
+        feature_dropout=args.feature_dropout, # Cập nhật
         id2label=hf_id2label,
         label2id=hf_label2id,
     )
@@ -442,7 +495,17 @@ def run_experiment(
     _, test_true, test_pred = evaluate(model, test_loader, device)
 
     print(f"\n===== {run_name} Test Metrics =====")
-    print_confusion_and_scores(test_true, test_pred, id2label)
+    # print_confusion_and_scores(test_true, test_pred, id2label)
+    save_evaluation_artifacts(
+        output_dir=args.output_dir,
+        split_df=test_df,
+        y_true=test_true,
+        y_pred=test_pred,
+        id2label=id2label,
+        confusion_matrix_file=args.confusion_matrix_file,
+        ovr_metrics_file=args.ovr_metrics_file,
+        misclassified_file=args.misclassified_file,
+    )
 
     os.makedirs(args.output_dir, exist_ok=True)
     debug(f"Saving model and tokenizer to {args.output_dir}")

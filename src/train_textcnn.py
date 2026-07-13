@@ -16,18 +16,17 @@ UNK_TOKEN = "<unk>"
 
 DEFAULT_TEXT_COLUMN = "tokens_text"
 DEFAULT_FEATURE_COLUMNS = [
-    "feat_log_num_tokens",
-    "feat_log_num_chars",
-    "feat_avg_token_len",
-    "feat_emoji_density",
-    "feat_punct_density",
-    "feat_upper_ratio",
-    "feat_digit_ratio",
-    "feat_bad_word_density",      # <--- BỔ SUNG: Rất quan trọng cho nhãn OFFENSIVE/HATE
-    "feat_exclamation_density",  # <--- BỔ SUNG: Biểu thị sắc thái kích động
-    "feat_allcaps_ratio"            # <--- BỔ SUNG: Biểu thị la hét/chửi bới
+    "feat_log_num_tokens",        
+    "feat_upper_ratio",           
+    "feat_emoji_density",         
+    "feat_bad_word_density",      
+    "feat_aggressive_pronoun",    
+    "feat_laugh_density",         
+    "feat_sarcastic_punct",       
+    "feat_scare_quotes",          
+    "feat_intensifier_words",     
+    "feat_elongated_ratio",       
 ]
-
 
 def debug(msg: str) -> None:
     print(f"[DEBUG][TextCNN] {msg}")
@@ -39,28 +38,23 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-
 def get_default_data_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dataset-vihsd"))
-
 
 def load_split(csv_path: str, text_column: str, feature_columns):
     df = pd.read_csv(csv_path, encoding="utf-8-sig")
     required_cols = {text_column, "label_id", *feature_columns}
     if not required_cols.issubset(df.columns):
         raise ValueError(f"{csv_path} must contain columns: {required_cols}")
-
     texts = df[text_column].fillna("").astype(str).tolist()
     meta_features = (
         df[feature_columns]
         .apply(pd.to_numeric, errors="coerce")
         .fillna(0.0)
         .astype(np.float32)
-        .values
-    )
+        .values)
     labels = pd.to_numeric(df["label_id"], errors="raise").astype(int).tolist()
     return texts, meta_features, labels
-
 
 def create_label_mapping(*label_lists):
     all_labels = []
@@ -94,42 +88,17 @@ def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
         vocab[token] = len(vocab)
     return vocab
 
-# def load_fasttext_vectors(vec_path: str):
-#     """
-#     Tải file FastText (.vec) vào bộ nhớ dưới dạng dictionary.
-#     """
-#     debug(f"Đang tải FastText vectors từ {vec_path} (Quá trình này có thể mất vài phút)...")
-#     embeddings_dict = {}
-#     with open(vec_path, 'r', encoding='utf-8') as f:
-#         # File .vec thường có dòng đầu tiên chứa: [số_lượng_từ] [số_chiều]
-#         first_line = f.readline().split()
-#         if len(first_line) == 2:
-#             pass # Bỏ qua dòng đầu
-#         else:
-#             f.seek(0)
-            
-#         for line in f:
-#             values = line.rstrip().split(' ')
-#             word = values[0]
-#             # FastText mặc định là chữ in thường, nên ta đồng bộ bằng .lower()
-#             word_lower = word.lower() 
-#             vector = np.asarray(values[1:], dtype='float32')
-#             embeddings_dict[word_lower] = vector
-            
-#     debug(f"Đã tải thành công {len(embeddings_dict)} vector từ vựng.")
-#     return embeddings_dict
-# THÊM THAM SỐ vocab VÀO HÀM
 def load_fasttext_vectors(vec_path: str, vocab: dict):
     """
     Tải file FastText (.vec) nhưng CHỈ giữ lại các từ có trong vocab 
     để tránh tràn bộ nhớ (MemoryError).
     """
-    debug(f"Đang tải FastText vectors từ {vec_path} (Quá trình này có thể mất vài phút)...")
+    debug(f"Đang tải FastText vectors từ {vec_path}...")
     embeddings_dict = {}
     with open(vec_path, 'r', encoding='utf-8') as f:
         first_line = f.readline().split()
         if len(first_line) == 2:
-            pass # Bỏ qua dòng đầu
+            pass 
         else:
             f.seek(0)
             
@@ -137,8 +106,6 @@ def load_fasttext_vectors(vec_path: str, vocab: dict):
             values = line.rstrip().split(' ')
             word = values[0]
             word_lower = word.lower() 
-            
-            # GIẢI PHÁP TỐI ƯU RAM: CHỈ lưu vector nếu từ đó CÓ TRONG TỪ ĐIỂN CỦA TẬP TRAIN
             if word_lower in vocab:
                 vector = np.asarray(values[1:], dtype='float32')
                 embeddings_dict[word_lower] = vector
@@ -200,10 +167,10 @@ class TextCNN(nn.Module):
         num_classes,
         num_filters=128,
         kernel_sizes=(3, 4, 5),
-        dropout=0.3,
+        dropout=0.5,
         padding_idx=0,
         num_meta_features=0,
-        meta_hidden_size=32,
+        meta_hidden_size=64,
         pretrained_embeddings=None
     ):
         super().__init__()
@@ -222,15 +189,6 @@ class TextCNN(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
         self.dropout = nn.Dropout(dropout)
         classifier_in_dim = num_filters * len(kernel_sizes)
-        # self.meta_proj = None
-        # if num_meta_features > 0:
-        #     self.meta_proj = nn.Sequential(
-        #         nn.Linear(num_meta_features, meta_hidden_size),
-        #         nn.ReLU(),
-        #         nn.Dropout(dropout),
-        #     )
-        #     classifier_in_dim = classifier_in_dim + meta_hidden_size
-
         self.meta_proj = None
         if num_meta_features > 0:
             self.meta_proj = nn.Sequential(
@@ -239,7 +197,7 @@ class TextCNN(nn.Module):
                 
                 # BƯỚC 2: Chiếu qua lớp Linear để học mối tương quan
                 nn.Linear(num_meta_features, meta_hidden_size),
-                nn.ReLU(),
+                nn.SiLU(),
                 nn.Dropout(dropout),
             )
             # (Đối với GRU, biến ở dòng dưới là out_dim thay vì classifier_in_dim)
@@ -286,37 +244,28 @@ def evaluate(model, loader, criterion, device):
     model.eval()
     total_loss = 0.0
     y_true, y_pred = [], []
-    debug(f"Evaluating with {len(loader)} batches")
-
     for batch_idx, (x, meta, y) in enumerate(loader, start=1):
         x, meta, y = x.to(device), meta.to(device), y.to(device)
         logits = model(x, meta)
         loss = criterion(logits, y)
 
-        # preds = torch.argmax(logits, dim=1)
-        # BỔ SUNG THRESHOLD MOVING
+        # THRESHOLD MOVING: Bắt tín hiệu mỉa mai/thù ghét ở ngưỡng thấp
         probs = torch.softmax(logits, dim=1)
         preds = []
         for p in probs:
-            # p[0] là Sạch, p[1] là Xúc phạm, p[2] là Thù địch
-            # Nếu xác suất Thù địch > 0.25 -> Chọn Thù địch (không cần đợi tới > 0.33)
-            if p[2] > 0.25:
+            if p[2] > 0.30:        # Ngưỡng Thù địch
                 preds.append(2)
-            # Nếu xác suất Xúc phạm > 0.25 -> Chọn Xúc phạm
-            elif p[1] > 0.25:
+            elif p[1] > 0.25:      # Ngưỡng Xúc phạm
                 preds.append(1)
             else:
-                preds.append(torch.argmax(p).item()) # Quay về argmax nếu ko đạt ngưỡng
+                preds.append(torch.argmax(p).item()) 
                 
         preds = torch.tensor(preds)
+        
         total_loss += loss.item() * x.size(0)
         y_true.extend(y.cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
-        if batch_idx % 50 == 0 or batch_idx == len(loader):
-            debug(f"Eval batch {batch_idx}/{len(loader)}")
-
     return total_loss / len(loader.dataset), y_true, y_pred
-
 
 def print_confusion_and_scores(y_true, y_pred, id2label):
     label_ids = list(range(len(id2label)))
@@ -356,6 +305,84 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
     print(f"\nAccuracy: {acc:.4f}")
     print(f"F1-macro: {f1_macro:.4f}")
 
+def print_confusion_and_scores(y_true, y_pred, id2label):
+    label_ids = list(range(len(id2label)))
+    cm = confusion_matrix(y_true, y_pred, labels=label_ids)
+
+    cm_df = pd.DataFrame(
+        cm,
+        index=[f"Origin_{id2label[i]}" for i in label_ids],
+        columns=[f"Prediction_{id2label[i]}" for i in label_ids],
+    )
+
+    print("\n=== Confusion Matrix (Origin rows x Prediction columns) ===")
+    print(cm_df.to_string())
+
+    total = cm.sum()
+    rows = []
+    for i in label_ids:
+        tp = int(cm[i, i])
+        fn = int(cm[i, :].sum() - tp)
+        fp = int(cm[:, i].sum() - tp)
+        tn = int(total - tp - fn - fp)
+        rows.append(
+            {
+                "Class": id2label[i],
+                "TN": tn,
+                "TP": tp,
+                "FN": fn,
+                "FP": fp,
+            }
+        )
+
+    print("\n=== One-vs-Rest Table (TN TP FN FP) ===")
+    ovr_df = pd.DataFrame(rows)
+    print(ovr_df.to_string(index=False))
+
+    acc = accuracy_score(y_true, y_pred)
+    f1_macro = f1_score(y_true, y_pred, average="macro")
+    print(f"\nAccuracy: {acc:.4f}")
+    print(f"F1-macro: {f1_macro:.4f}")
+    
+    # SỬA TẠI ĐÂY: Phải return các biến này để hàm export nhận được
+    return cm_df, ovr_df, acc, f1_macro
+
+
+def save_evaluation_artifacts(
+    output_dir,
+    split_df,
+    y_true,
+    y_pred,
+    id2label,
+    confusion_matrix_file,
+    ovr_metrics_file,
+    misclassified_file,
+):
+    if len(split_df) != len(y_true) or len(split_df) != len(y_pred):
+        raise ValueError("Prediction length does not match split dataframe length")
+
+    cm_df, ovr_df, acc, f1_macro = print_confusion_and_scores(y_true, y_pred, id2label)
+
+    os.makedirs(output_dir, exist_ok=True)
+    cm_path = os.path.join(output_dir, confusion_matrix_file)
+    ovr_path = os.path.join(output_dir, ovr_metrics_file)
+    mis_path = os.path.join(output_dir, misclassified_file)
+
+    cm_df.to_csv(cm_path, encoding="utf-8-sig")
+    ovr_df.to_csv(ovr_path, index=False, encoding="utf-8-sig")
+
+    eval_df = split_df.reset_index(drop=True).copy()
+    eval_df["label_id_true"] = [id2label[i] for i in y_true]
+    eval_df["label_id_pred"] = [id2label[i] for i in y_pred]
+    eval_df["is_misclassified"] = eval_df["label_id_true"] != eval_df["label_id_pred"]
+
+    mis_df = eval_df[eval_df["is_misclassified"]].copy()
+    mis_df.to_csv(mis_path, index=False, encoding="utf-8-sig")
+
+    debug(f"Exported confusion matrix to: {cm_path}")
+    debug(f"Exported one-vs-rest table to: {ovr_path}")
+    debug(f"Exported misclassified rows to: {mis_path} (rows={len(mis_df)})")
+    debug(f"Final test metrics | accuracy={acc:.4f}, f1_macro={f1_macro:.4f}")
 
 def parse_kernel_sizes(s: str):
     return tuple(int(x.strip()) for x in s.split(",") if x.strip())
@@ -390,20 +417,23 @@ def parse_args():
     )
     parser.add_argument("--num_filters", type=int, default=128)
     parser.add_argument("--kernel_sizes", type=str, default="3,4,5")
-    parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument("--dropout", type=float, default=0.5)
 
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--meta_hidden_size", type=int, default=32)
+    parser.add_argument("--meta_hidden_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument(
         "--output_dir",
         type=str,
         default=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "textcnn")),
     )
+    parser.add_argument("--confusion_matrix_file", type=str, default="confusion_matrix_test.csv")
+    parser.add_argument("--ovr_metrics_file", type=str, default="ovr_metrics_test.csv")
+    parser.add_argument("--misclassified_file", type=str, default="misclassified_test.csv")
     return parser.parse_args()
 
 
@@ -457,6 +487,7 @@ def main():
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
+    test_df = pd.read_csv(os.path.join(args.data_dir, args.test_file), encoding="utf-8-sig")
     debug(f"Kích thước tập test : {len(test_texts)} mẫu.")
     debug(
         f"Loaded rows | train={len(train_texts)}, dev={len(dev_texts)}, test={len(test_texts)}"
@@ -538,7 +569,7 @@ def main():
 
     # BỔ SUNG SCHEDULER: Giảm LR đi một nửa (factor=0.5) nếu dev_f1 không tăng sau 2 epoch
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=2
+        optimizer, mode='max', factor=0.5, patience=3
     )
     # ----------------------------------------------------------
     debug("Optimizer and criterion initialized")
@@ -582,7 +613,17 @@ def main():
     _, test_true, test_pred = evaluate(model, test_loader, criterion, device)
 
     print("\n===== TextCNN Test Metrics =====")
-    print_confusion_and_scores(test_true, test_pred, id2label)
+    # print_confusion_and_scores(test_true, test_pred, id2label)
+    save_evaluation_artifacts(
+        output_dir=args.output_dir,
+        split_df=test_df,
+        y_true=test_true,
+        y_pred=test_pred,
+        id2label=id2label,
+        confusion_matrix_file=args.confusion_matrix_file,
+        ovr_metrics_file=args.ovr_metrics_file,
+        misclassified_file=args.misclassified_file,
+    )
 
     os.makedirs(args.output_dir, exist_ok=True)
     save_path = os.path.join(args.output_dir, "best_textcnn.pt")
