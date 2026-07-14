@@ -55,12 +55,17 @@ def load_split(csv_path: str, text_column: str, feature_columns):
     labels = pd.to_numeric(df["label_id"], errors="raise").astype(int).tolist()
     return texts, meta_features, labels
 
+# def create_label_mapping(*label_lists):
+#     all_labels = []
+#     for labels in label_lists:
+#         all_labels.extend(labels)
+#     unique_labels = sorted(set(all_labels))
+#     label2id = {label: idx for idx, label in enumerate(unique_labels)}
+#     id2label = {idx: label for label, idx in label2id.items()}
+#     return label2id, id2label
 def create_label_mapping(*label_lists):
-    all_labels = []
-    for labels in label_lists:
-        all_labels.extend(labels)
-    unique_labels = sorted(set(all_labels))
-    label2id = {label: idx for idx, label in enumerate(unique_labels)}
+    # Khai báo mapping tĩnh thay vì động để kiểm soát hoàn toàn hệ thống nhãn
+    label2id = {0: 0, 1: 1, 2: 2} # Đảm bảo 0: Clean, 1: Offensive, 2: Hate
     id2label = {idx: label for label, idx in label2id.items()}
     return label2id, id2label
 
@@ -84,7 +89,7 @@ def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
         vocab[token] = len(vocab)
     return vocab
 
-def load_fasttext_vectors(vec_path: str, vocab: dict):
+def load_fasttext_vectors(vec_path: str, vocab: dict, embed_dim: int = 300):
     debug(f"Đang tải FastText vectors từ {vec_path}...")
     embeddings_dict = {}
     with open(vec_path, 'r', encoding='utf-8') as f:
@@ -94,6 +99,8 @@ def load_fasttext_vectors(vec_path: str, vocab: dict):
             
         for line in f:
             values = line.rstrip().split(' ')
+            if len(values) != embed_dim + 1: 
+                continue
             word = values[0]
             word_lower = word.lower() 
             if word_lower in vocab:
@@ -159,8 +166,8 @@ class TextCNN(nn.Module):
             self.embedding = nn.Embedding.from_pretrained(
                 pretrained_embeddings, freeze=False, padding_idx=padding_idx
             )
-        else:
-            self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+        # else:
+            # self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
             
         self.convs = nn.ModuleList([nn.Conv1d(embed_dim, num_filters, k) for k in kernel_sizes])
         self.dropout = nn.Dropout(dropout)
@@ -209,6 +216,30 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
     return total_loss / len(loader.dataset)
 
+# @torch.no_grad()
+# def evaluate(model, loader, criterion, device):
+#     model.eval()
+#     total_loss = 0.0
+#     y_true, y_pred = [], []
+#     for batch_idx, (x, meta, y) in enumerate(loader, start=1):
+#         x, meta, y = x.to(device), meta.to(device), y.to(device)
+#         logits = model(x, meta)
+#         loss = criterion(logits, y)
+#         # THRESHOLD MOVING: Giữ nguyên chiến lược bắt tín hiệu độc hại
+#         probs = torch.softmax(logits, dim=1)
+#         preds = []
+#         for p in probs:
+#             if p[2] > 0.3 and p[2] > p[1]:        # Ngưỡng Thù địch
+#                 preds.append(2)
+#             elif p[1] > 0.3:                      # Ngưỡng Xúc phạm
+#                 preds.append(1)
+#             else:
+#                 preds.append(torch.argmax(p).item())            
+#         preds = torch.tensor(preds)
+#         total_loss += loss.item() * x.size(0)
+#         y_true.extend(y.cpu().tolist())
+#         y_pred.extend(preds.cpu().tolist())
+#     return total_loss / len(loader.dataset), y_true, y_pred
 @torch.no_grad()
 def evaluate(model, loader, criterion, device):
     model.eval()
@@ -219,22 +250,24 @@ def evaluate(model, loader, criterion, device):
         logits = model(x, meta)
         loss = criterion(logits, y)
 
-        # THRESHOLD MOVING: Giữ nguyên chiến lược bắt tín hiệu độc hại
         probs = torch.softmax(logits, dim=1)
-        preds = []
-        for p in probs:
-            if p[2] > 0.2 and p[2] > p[1]:        # Ngưỡng Thù địch
-                preds.append(2)
-            elif p[1] > 0.2:                      # Ngưỡng Xúc phạm
-                preds.append(1)
-            else:
-                preds.append(torch.argmax(p).item()) 
-                
-        preds = torch.tensor(preds)
+        
+        # VECTORIZATION thay vì vòng lặp for
+        default_preds = torch.argmax(probs, dim=1)
+        
+        # Tạo mask (mặt nạ) cho từng điều kiện
+        hate_mask = (probs[:, 2] > 0.3) & (probs[:, 2] > probs[:, 1])
+        offensive_mask = (probs[:, 1] > 0.3) & ~hate_mask
+        
+        # Áp dụng threshold logic song song
+        preds = default_preds.clone()
+        preds[offensive_mask] = 1
+        preds[hate_mask] = 2
         
         total_loss += loss.item() * x.size(0)
         y_true.extend(y.cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
+        
     return total_loss / len(loader.dataset), y_true, y_pred
 
 def print_confusion_and_scores(y_true, y_pred, id2label):
@@ -454,7 +487,7 @@ def main():
     test_ds = TextDataset(test_texts, test_meta, test_labels, vocab, args.max_len)
 
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
+        train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, drop_last=True
     )
     dev_loader = DataLoader(
         dev_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
@@ -481,15 +514,12 @@ def main():
     ).to(device)
     debug("Model initialized")
 
-    # [FIX] Bổ sung Phạt L2 (weight_decay=1e-4) để tránh overfitting tuyệt đối trên dữ liệu bị nhân bản
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    
-    # Trở lại CrossEntropyLoss mặc định
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
-    debug("Optimizer (with L2 Regularization) and CrossEntropy initialized")
+    debug("Optimizer and criterion initialized")
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=3
+        optimizer, mode='max', factor=0.5, patience=2
     )
 
     best_dev_f1 = -1.0
