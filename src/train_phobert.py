@@ -282,16 +282,25 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
     # THÊM DÒNG NÀY VÀO CUỐI HÀM
     return cm_df, pd.DataFrame(rows), acc, f1_macro
 
+def build_export_filename(model_prefix: str, filename: str) -> str:
+    if not filename:
+        return f"{model_prefix}_artifact.csv"
+    base_name = os.path.basename(filename)
+    if base_name.startswith(f"{model_prefix}_"):
+        return base_name
+    return f"{model_prefix}_{base_name}"
+
+
 def save_evaluation_artifacts(
     output_dir, split_df, y_true, y_pred, id2label,
-    confusion_matrix_file, ovr_metrics_file, misclassified_file
+    confusion_matrix_file, ovr_metrics_file, misclassified_file, model_prefix="phobert"
 ):
     cm_df, ovr_df, acc, f1_macro = print_confusion_and_scores(y_true, y_pred, id2label)
     os.makedirs(output_dir, exist_ok=True)
     
-    cm_path = os.path.join(output_dir, confusion_matrix_file)
-    ovr_path = os.path.join(output_dir, ovr_metrics_file)
-    mis_path = os.path.join(output_dir, misclassified_file)
+    cm_path = os.path.join(output_dir, build_export_filename(model_prefix, confusion_matrix_file))
+    ovr_path = os.path.join(output_dir, build_export_filename(model_prefix, ovr_metrics_file))
+    mis_path = os.path.join(output_dir, build_export_filename(model_prefix, misclassified_file))
 
     cm_df.to_csv(cm_path, encoding="utf-8-sig")
     ovr_df.to_csv(ovr_path, index=False, encoding="utf-8-sig")
@@ -319,6 +328,7 @@ def run_experiment(
     run_name="PhoBERT",
     default_text_column="tokens_text"  # <--- SỬA TẠI ĐÂY: Mặc định PhoBERT dùng text CÓ gạch dưới
 ):
+    model_prefix = "phobert"
     parser = argparse.ArgumentParser(description=f"Train {run_name}")
     parser.add_argument("--data_dir", type=str, default=get_default_data_dir())
     parser.add_argument("--train_file", type=str, default="features_train.csv")
@@ -505,11 +515,12 @@ def run_experiment(
         confusion_matrix_file=args.confusion_matrix_file,
         ovr_metrics_file=args.ovr_metrics_file,
         misclassified_file=args.misclassified_file,
+        model_prefix=model_prefix,
     )
 
     os.makedirs(args.output_dir, exist_ok=True)
     debug(f"Saving model and tokenizer to {args.output_dir}")
-    save_path = os.path.join(args.output_dir, "best_transformer_with_features.pt")
+    save_path = os.path.join(args.output_dir, f"{model_prefix}_best_model.pt")
     torch.save(
         {
             "model_state_dict": model.state_dict(),

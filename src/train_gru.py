@@ -274,9 +274,9 @@ def evaluate(model, loader, criterion, device):
         probs = torch.softmax(logits, dim=1)
         preds = []
         for p in probs:
-            if p[2] > 0.30:        # Ngưỡng Thù địch
+            if p[2] > 0.2 and p[2] > p[1]:
                 preds.append(2)
-            elif p[1] > 0.25:      # Ngưỡng Xúc phạm
+            elif p[1] > 0.2:      # Ngưỡng Xúc phạm
                 preds.append(1)
             else:
                 preds.append(torch.argmax(p).item()) 
@@ -329,6 +329,15 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
     return cm_df, ovr_df, acc, f1_macro
 
 
+def build_export_filename(model_prefix: str, filename: str) -> str:
+    if not filename:
+        return f"{model_prefix}_artifact.csv"
+    base_name = os.path.basename(filename)
+    if base_name.startswith(f"{model_prefix}_"):
+        return base_name
+    return f"{model_prefix}_{base_name}"
+
+
 def save_evaluation_artifacts(
     output_dir,
     split_df,
@@ -338,6 +347,7 @@ def save_evaluation_artifacts(
     confusion_matrix_file,
     ovr_metrics_file,
     misclassified_file,
+    model_prefix="gru",
 ):
     if len(split_df) != len(y_true) or len(split_df) != len(y_pred):
         raise ValueError("Prediction length does not match split dataframe length")
@@ -345,9 +355,9 @@ def save_evaluation_artifacts(
     cm_df, ovr_df, acc, f1_macro = print_confusion_and_scores(y_true, y_pred, id2label)
 
     os.makedirs(output_dir, exist_ok=True)
-    cm_path = os.path.join(output_dir, confusion_matrix_file)
-    ovr_path = os.path.join(output_dir, ovr_metrics_file)
-    mis_path = os.path.join(output_dir, misclassified_file)
+    cm_path = os.path.join(output_dir, build_export_filename(model_prefix, confusion_matrix_file))
+    ovr_path = os.path.join(output_dir, build_export_filename(model_prefix, ovr_metrics_file))
+    mis_path = os.path.join(output_dir, build_export_filename(model_prefix, misclassified_file))
 
     cm_df.to_csv(cm_path, encoding="utf-8-sig")
     ovr_df.to_csv(ovr_path, index=False, encoding="utf-8-sig")
@@ -417,6 +427,7 @@ def parse_args():
 
 
 def main():
+    model_prefix = "gru"
     args = parse_args()
     feature_columns = parse_feature_columns(args.feature_columns)
     debug("Starting script")
@@ -606,10 +617,11 @@ def main():
         confusion_matrix_file=args.confusion_matrix_file,
         ovr_metrics_file=args.ovr_metrics_file,
         misclassified_file=args.misclassified_file,
+        model_prefix=model_prefix,
     )
 
     os.makedirs(args.output_dir, exist_ok=True)
-    save_path = os.path.join(args.output_dir, "best_gru.pt")
+    save_path = os.path.join(args.output_dir, f"{model_prefix}_best_model.pt")
     debug(f"Saving model to {save_path}")
     torch.save(
         {

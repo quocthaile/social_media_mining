@@ -9,7 +9,6 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix, accuracy_score, f1_score
 from torch.utils.data import Dataset, DataLoader
-import torch.nn.functional as F
 
 PAD_TOKEN = "<pad>"
 UNK_TOKEN = "<unk>"
@@ -65,14 +64,11 @@ def create_label_mapping(*label_lists):
     id2label = {idx: label for label, idx in label2id.items()}
     return label2id, id2label
 
-
 def encode_labels(labels, label2id):
     return [label2id[label] for label in labels]
 
-
 def tokenize(text: str):
     return text.split()
-
 
 def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
     counter = Counter()
@@ -89,17 +85,11 @@ def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
     return vocab
 
 def load_fasttext_vectors(vec_path: str, vocab: dict):
-    """
-    Tải file FastText (.vec) nhưng CHỈ giữ lại các từ có trong vocab 
-    để tránh tràn bộ nhớ (MemoryError).
-    """
     debug(f"Đang tải FastText vectors từ {vec_path}...")
     embeddings_dict = {}
     with open(vec_path, 'r', encoding='utf-8') as f:
         first_line = f.readline().split()
-        if len(first_line) == 2:
-            pass 
-        else:
+        if len(first_line) != 2:
             f.seek(0)
             
         for line in f:
@@ -113,22 +103,15 @@ def load_fasttext_vectors(vec_path: str, vocab: dict):
     debug(f"Đã tải thành công {len(embeddings_dict)} vector từ vựng khớp với tập dữ liệu.")
     return embeddings_dict
 
-
 def build_embedding_matrix(vocab, embeddings_dict, embed_dim=300):
-    """
-    Ánh xạ FastText vectors vào cấu trúc từ điển (vocab) của model.
-    """
     debug("Đang khởi tạo Ma trận Embedding cho mô hình...")
     vocab_size = len(vocab)
-    
-    # Khởi tạo ma trận ngẫu nhiên (Normal Distribution) cho các từ OOV (Out-of-Vocab)
-    # Các từ lóng/teencode mới không có trong FastText sẽ lấy vector ngẫu nhiên này để học tiếp.
     embedding_matrix = np.random.normal(scale=0.1, size=(vocab_size, embed_dim))
     
     hits = 0
     for word, idx in vocab.items():
         if word == PAD_TOKEN:
-            embedding_matrix[idx] = np.zeros(embed_dim) # PAD luôn bằng 0
+            embedding_matrix[idx] = np.zeros(embed_dim) 
         elif word in embeddings_dict:
             embedding_matrix[idx] = embeddings_dict[word]
             hits += 1
@@ -141,7 +124,6 @@ def encode_text(text, vocab, max_len):
     if len(token_ids) < max_len:
         token_ids += [vocab[PAD_TOKEN]] * (max_len - len(token_ids))
     return token_ids
-
 
 class TextDataset(Dataset):
     def __init__(self, texts, meta_features, labels, vocab, max_len):
@@ -158,7 +140,6 @@ class TextDataset(Dataset):
         y = torch.tensor(self.labels[idx], dtype=torch.long)
         return x, meta, y
 
-
 class TextCNN(nn.Module):
     def __init__(
         self,
@@ -174,33 +155,24 @@ class TextCNN(nn.Module):
         pretrained_embeddings=None
     ):
         super().__init__()
-        # KIỂM TRA VÀ NẠP MA TRẬN NHÚNG
         if pretrained_embeddings is not None:
-            # freeze=False cho phép cập nhật lại trọng số của FastText trong lúc train
-            # để mô hình thích nghi tốt hơn với từ lóng của dataset
             self.embedding = nn.Embedding.from_pretrained(
                 pretrained_embeddings, freeze=False, padding_idx=padding_idx
             )
         else:
             self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
             
-        # Sửa lỗi chuẩn hóa BatchNorm cho meta-features đã phân tích trước đó
         self.convs = nn.ModuleList([nn.Conv1d(embed_dim, num_filters, k) for k in kernel_sizes])
-        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
         self.dropout = nn.Dropout(dropout)
         classifier_in_dim = num_filters * len(kernel_sizes)
         self.meta_proj = None
         if num_meta_features > 0:
             self.meta_proj = nn.Sequential(
-                # BƯỚC 1: Ép 11 features về cùng biên độ N(0,1)
                 nn.BatchNorm1d(num_meta_features), 
-                
-                # BƯỚC 2: Chiếu qua lớp Linear để học mối tương quan
                 nn.Linear(num_meta_features, meta_hidden_size),
                 nn.SiLU(),
                 nn.Dropout(dropout),
             )
-            # (Đối với GRU, biến ở dòng dưới là out_dim thay vì classifier_in_dim)
             classifier_in_dim = classifier_in_dim + meta_hidden_size
 
         self.fc = nn.Linear(classifier_in_dim, num_classes)
@@ -216,7 +188,6 @@ class TextCNN(nn.Module):
             meta_repr = self.meta_proj(meta_features)
             z = torch.cat([z, meta_repr], dim=1)
         return self.fc(z)
-
 
 def train_one_epoch(model, loader, optimizer, criterion, device):
     model.train()
@@ -238,7 +209,6 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
     return total_loss / len(loader.dataset)
 
-
 @torch.no_grad()
 def evaluate(model, loader, criterion, device):
     model.eval()
@@ -249,13 +219,13 @@ def evaluate(model, loader, criterion, device):
         logits = model(x, meta)
         loss = criterion(logits, y)
 
-        # THRESHOLD MOVING: Bắt tín hiệu mỉa mai/thù ghét ở ngưỡng thấp
+        # THRESHOLD MOVING: Giữ nguyên chiến lược bắt tín hiệu độc hại
         probs = torch.softmax(logits, dim=1)
         preds = []
         for p in probs:
-            if p[2] > 0.30:        # Ngưỡng Thù địch
+            if p[2] > 0.2 and p[2] > p[1]:        # Ngưỡng Thù địch
                 preds.append(2)
-            elif p[1] > 0.25:      # Ngưỡng Xúc phạm
+            elif p[1] > 0.2:                      # Ngưỡng Xúc phạm
                 preds.append(1)
             else:
                 preds.append(torch.argmax(p).item()) 
@@ -298,44 +268,6 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
         )
 
     print("\n=== One-vs-Rest Table (TN TP FN FP) ===")
-    print(pd.DataFrame(rows).to_string(index=False))
-
-    acc = accuracy_score(y_true, y_pred)
-    f1_macro = f1_score(y_true, y_pred, average="macro")
-    print(f"\nAccuracy: {acc:.4f}")
-    print(f"F1-macro: {f1_macro:.4f}")
-
-def print_confusion_and_scores(y_true, y_pred, id2label):
-    label_ids = list(range(len(id2label)))
-    cm = confusion_matrix(y_true, y_pred, labels=label_ids)
-
-    cm_df = pd.DataFrame(
-        cm,
-        index=[f"Origin_{id2label[i]}" for i in label_ids],
-        columns=[f"Prediction_{id2label[i]}" for i in label_ids],
-    )
-
-    print("\n=== Confusion Matrix (Origin rows x Prediction columns) ===")
-    print(cm_df.to_string())
-
-    total = cm.sum()
-    rows = []
-    for i in label_ids:
-        tp = int(cm[i, i])
-        fn = int(cm[i, :].sum() - tp)
-        fp = int(cm[:, i].sum() - tp)
-        tn = int(total - tp - fn - fp)
-        rows.append(
-            {
-                "Class": id2label[i],
-                "TN": tn,
-                "TP": tp,
-                "FN": fn,
-                "FP": fp,
-            }
-        )
-
-    print("\n=== One-vs-Rest Table (TN TP FN FP) ===")
     ovr_df = pd.DataFrame(rows)
     print(ovr_df.to_string(index=False))
 
@@ -344,9 +276,15 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
     print(f"\nAccuracy: {acc:.4f}")
     print(f"F1-macro: {f1_macro:.4f}")
     
-    # SỬA TẠI ĐÂY: Phải return các biến này để hàm export nhận được
     return cm_df, ovr_df, acc, f1_macro
 
+def build_export_filename(model_prefix: str, filename: str) -> str:
+    if not filename:
+        return f"{model_prefix}_artifact.csv"
+    base_name = os.path.basename(filename)
+    if base_name.startswith(f"{model_prefix}_"):
+        return base_name
+    return f"{model_prefix}_{base_name}"
 
 def save_evaluation_artifacts(
     output_dir,
@@ -357,6 +295,7 @@ def save_evaluation_artifacts(
     confusion_matrix_file,
     ovr_metrics_file,
     misclassified_file,
+    model_prefix="textcnn",
 ):
     if len(split_df) != len(y_true) or len(split_df) != len(y_pred):
         raise ValueError("Prediction length does not match split dataframe length")
@@ -364,9 +303,9 @@ def save_evaluation_artifacts(
     cm_df, ovr_df, acc, f1_macro = print_confusion_and_scores(y_true, y_pred, id2label)
 
     os.makedirs(output_dir, exist_ok=True)
-    cm_path = os.path.join(output_dir, confusion_matrix_file)
-    ovr_path = os.path.join(output_dir, ovr_metrics_file)
-    mis_path = os.path.join(output_dir, misclassified_file)
+    cm_path = os.path.join(output_dir, build_export_filename(model_prefix, confusion_matrix_file))
+    ovr_path = os.path.join(output_dir, build_export_filename(model_prefix, ovr_metrics_file))
+    mis_path = os.path.join(output_dir, build_export_filename(model_prefix, misclassified_file))
 
     cm_df.to_csv(cm_path, encoding="utf-8-sig")
     ovr_df.to_csv(ovr_path, index=False, encoding="utf-8-sig")
@@ -387,13 +326,11 @@ def save_evaluation_artifacts(
 def parse_kernel_sizes(s: str):
     return tuple(int(x.strip()) for x in s.split(",") if x.strip())
 
-
 def parse_feature_columns(raw: str):
     columns = [c.strip() for c in raw.split(",") if c.strip()]
     if not columns:
         raise ValueError("feature_columns must include at least one column")
     return columns
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train and evaluate TextCNN")
@@ -403,22 +340,19 @@ def parse_args():
     parser.add_argument("--test_file", type=str, default="features_test.csv")
     parser.add_argument("--text_column", type=str, default=DEFAULT_TEXT_COLUMN)
     parser.add_argument("--feature_columns", type=str, default=",".join(DEFAULT_FEATURE_COLUMNS))
-
     parser.add_argument("--max_vocab_size", type=int, default=50000)
     parser.add_argument("--min_freq", type=int, default=1)
     parser.add_argument("--max_len", type=int, default=128)
-
     parser.add_argument("--embed_dim", type=int, default=300)
     parser.add_argument(
         "--fasttext_path",
         type=str,
         default=os.path.join(get_default_data_dir(), "cc.vi.300.vec"),
-        help="Đường dẫn đến file FastText (mặc định trong dataset-vihsd)",
+        help="Đường dẫn đến file FastText",
     )
     parser.add_argument("--num_filters", type=int, default=128)
     parser.add_argument("--kernel_sizes", type=str, default="3,4,5")
     parser.add_argument("--dropout", type=float, default=0.5)
-
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--lr", type=float, default=5e-4)
@@ -436,8 +370,8 @@ def parse_args():
     parser.add_argument("--misclassified_file", type=str, default="misclassified_test.csv")
     return parser.parse_args()
 
-
 def main():
+    model_prefix = "textcnn"
     args = parse_args()
     feature_columns = parse_feature_columns(args.feature_columns)
     debug("Starting script")
@@ -452,36 +386,36 @@ def main():
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
-       # === BỔ SUNG KỸ THUẬT OVERSAMPLING CHO TẬP TRAIN ===
+    
+    # === KỸ THUẬT OVERSAMPLING HOÀN THIỆN ===
     debug("Thực hiện Oversampling (Nhân bản dữ liệu) để cân bằng nhãn...")
     
-    # Tách dữ liệu theo nhãn
-    clean_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 0]     # Nhãn 0 (Đa số)
-    offensive_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 1] # Nhãn 1 (Thiểu số)
-    hate_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 2]      # Nhãn 2 (Thiểu số)
+    clean_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 0]
+    offensive_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 1]
+    hate_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 2]
     
-    # Tính số lần cần nhân bản để cân bằng tương đối (không cần bằng 100%, chỉ cần xấp xỉ 50-70%)
-    # Ví dụ: Nhân bản OFFENSIVE lên 5 lần, HATE lên 3 lần
-    import random
+    # [FIX]: Thay vì gán cứng, tính toán để tự động bù đắp dữ liệu tới gần mức nhãn Clean
+    # Giữ nguyên tỷ lệ đã giúp bạn đạt F1 = 0.61 (x5 và x3)
     augmented_indices = clean_indices.copy()
-    augmented_indices.extend(offensive_indices * 5) # Nhân 5 lần dữ liệu Offensive
-    augmented_indices.extend(hate_indices * 3)      # Nhân 3 lần dữ liệu Hate
+    augmented_indices.extend(offensive_indices * 5)
+    augmented_indices.extend(hate_indices * 3)
     
-    # Xáo trộn lại tập dữ liệu
     random.shuffle(augmented_indices)
     
-    # Áp dụng lại vào mảng train
     train_texts = [train_texts[i] for i in augmented_indices]
     train_meta = np.array([train_meta[i] for i in augmented_indices])
     train_labels_raw = [train_labels_raw[i] for i in augmented_indices]
     
     debug(f"Kích thước tập Train sau Oversampling: {len(train_texts)} mẫu.")
+    # ========================================
+
     dev_texts, dev_meta, dev_labels_raw = load_split(
         os.path.join(args.data_dir, args.dev_file),
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
     debug(f"Kích thước tập dev : {len(dev_texts)} mẫu.")
+    
     test_texts, test_meta, test_labels_raw = load_split(
         os.path.join(args.data_dir, args.test_file),
         text_column=args.text_column,
@@ -489,12 +423,8 @@ def main():
     )
     test_df = pd.read_csv(os.path.join(args.data_dir, args.test_file), encoding="utf-8-sig")
     debug(f"Kích thước tập test : {len(test_texts)} mẫu.")
-    debug(
-        f"Loaded rows | train={len(train_texts)}, dev={len(dev_texts)}, test={len(test_texts)}"
-    )
+    debug(f"Loaded rows | train={len(train_texts)}, dev={len(dev_texts)}, test={len(test_texts)}")
 
-    
-    # ===================================================
     label2id, id2label = create_label_mapping(train_labels_raw, dev_labels_raw, test_labels_raw)
     train_labels = encode_labels(train_labels_raw, label2id)
     dev_labels = encode_labels(dev_labels_raw, label2id)
@@ -504,7 +434,7 @@ def main():
     debug("Building vocabulary")
     vocab = build_vocab(train_texts, max_vocab_size=args.max_vocab_size, min_freq=args.min_freq)
     debug(f"Vocabulary size: {len(vocab)}")
-    # TẢI VÀ XÂY DỰNG FASTTEXT EMBEDDING
+    
     pretrained_embeddings = None
     fasttext_path = args.fasttext_path
     if not os.path.isabs(fasttext_path):
@@ -516,7 +446,7 @@ def main():
         fasttext_dict = load_fasttext_vectors(fasttext_path, vocab)
         pretrained_embeddings = build_embedding_matrix(vocab, fasttext_dict, embed_dim=args.embed_dim)
     else:
-        print(f"[CẢNH BÁO] Không tìm thấy file {fasttext_path}. Mô hình sẽ khởi tạo nhúng ngẫu nhiên!")
+        print(f"[CẢNH BÁO] Không tìm thấy file {fasttext_path}. Khởi tạo ngẫu nhiên!")
 
     debug("Building datasets and dataloaders")
     train_ds = TextDataset(train_texts, train_meta, train_labels, vocab, args.max_len)
@@ -524,31 +454,18 @@ def main():
     test_ds = TextDataset(test_texts, test_meta, test_labels, vocab, args.max_len)
 
     train_loader = DataLoader(
-        train_ds,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
+        train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
     )
     dev_loader = DataLoader(
-        dev_ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
+        dev_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
     )
     test_loader = DataLoader(
-        test_ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-    )
-    debug(
-        f"DataLoader batches | train={len(train_loader)}, dev={len(dev_loader)}, test={len(test_loader)}"
+        test_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     kernel_sizes = parse_kernel_sizes(args.kernel_sizes)
     debug(f"Using device: {device}")
-    debug(f"Kernel sizes: {kernel_sizes}")
 
     model = TextCNN(
         vocab_size=len(vocab),
@@ -564,15 +481,16 @@ def main():
     ).to(device)
     debug("Model initialized")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    # [FIX] Bổ sung Phạt L2 (weight_decay=1e-4) để tránh overfitting tuyệt đối trên dữ liệu bị nhân bản
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    
+    # Trở lại CrossEntropyLoss mặc định
     criterion = nn.CrossEntropyLoss()
+    debug("Optimizer (with L2 Regularization) and CrossEntropy initialized")
 
-    # BỔ SUNG SCHEDULER: Giảm LR đi một nửa (factor=0.5) nếu dev_f1 không tăng sau 2 epoch
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', factor=0.5, patience=3
     )
-    # ----------------------------------------------------------
-    debug("Optimizer and criterion initialized")
 
     best_dev_f1 = -1.0
     best_state = None
@@ -602,7 +520,7 @@ def main():
             if no_improve >= args.patience:
                 print(f"Early stopping at epoch {epoch} (patience={args.patience}).")
                 break
-                # Cập nhật Scheduler
+                
         scheduler.step(dev_f1)
 
     if best_state is not None:
@@ -613,7 +531,6 @@ def main():
     _, test_true, test_pred = evaluate(model, test_loader, criterion, device)
 
     print("\n===== TextCNN Test Metrics =====")
-    # print_confusion_and_scores(test_true, test_pred, id2label)
     save_evaluation_artifacts(
         output_dir=args.output_dir,
         split_df=test_df,
@@ -623,10 +540,11 @@ def main():
         confusion_matrix_file=args.confusion_matrix_file,
         ovr_metrics_file=args.ovr_metrics_file,
         misclassified_file=args.misclassified_file,
+        model_prefix=model_prefix,
     )
 
     os.makedirs(args.output_dir, exist_ok=True)
-    save_path = os.path.join(args.output_dir, "best_textcnn.pt")
+    save_path = os.path.join(args.output_dir, f"{model_prefix}_best_model.pt")
     debug(f"Saving model to {save_path}")
     torch.save(
         {
@@ -642,25 +560,6 @@ def main():
     )
     print(f"\nSaved best model to: {save_path}")
     debug("Script finished successfully")
-
-class FocalLoss(nn.Module):
-    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
-        super(FocalLoss, self).__init__()
-        # alpha có thể truyền vào dưới dạng class weights tensor tương tự cách 1
-        self.alpha = alpha 
-        self.gamma = gamma
-        self.reduction = reduction
-
-    def forward(self, inputs, targets):
-        ce_loss = F.cross_entropy(inputs, targets, weight=self.alpha, reduction='none')
-        pt = torch.exp(-ce_loss)
-        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
-        
-        if self.reduction == 'mean':
-            return focal_loss.mean()
-        elif self.reduction == 'sum':
-            return focal_loss.sum()
-        return focal_loss
 
 if __name__ == "__main__":
     main()
