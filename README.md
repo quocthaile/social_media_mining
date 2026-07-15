@@ -1,10 +1,11 @@
-# Tài liệu Kỹ thuật: Pipeline ViHSD trong workspace hiện tại
+# Tài liệu kỹ thuật
 
 ## 1. Mục tiêu và phạm vi
 
-README này mô tả đúng luồng xử lý đang có trong workspace `Social_Media_Mining`, từ dữ liệu gốc đến dữ liệu trung gian, huấn luyện mô hình, và các artifact đã được lưu sẵn.
+README này mô tả luồng xử lý  `Social_Media_Mining`, từ dữ liệu gốc đến dữ liệu trung gian, huấn luyện mô hình, và các artifact đã được lưu sẵn.
 
 Phạm vi gồm:
+
 - Tiền xử lý văn bản: `src/preprocessing.py` và `src/preprocessing_dic.py`
 - Sinh bộ dữ liệu đặc trưng: `src/build_feature_dataset.py`
 - Huấn luyện mô hình cổ điển: `src/train_textcnn.py`, `src/train_gru.py`

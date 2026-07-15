@@ -351,7 +351,6 @@ def run_experiment(
     default_text_column="tokens_text",
     model_prefix="phobert"
 ):
-    model_prefix = "phobert"
     parser = argparse.ArgumentParser(description=f"Train {run_name}")
     parser.add_argument("--data_dir", type=str, default=get_default_data_dir())
     parser.add_argument("--train_file", type=str, default="features_train.csv")
