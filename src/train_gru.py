@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix, accuracy_score, f1_score
 from torch.utils.data import Dataset, DataLoader
+import re
 
 PAD_TOKEN = "<pad>"
 UNK_TOKEN = "<unk>"
@@ -27,6 +28,7 @@ DEFAULT_FEATURE_COLUMNS = [
     "feat_elongated_ratio",       
 ]
 
+TOKEN_PATTERN = re.compile(r"[\w_+-]+|[^\w\s]", flags=re.UNICODE)
 
 def debug(msg: str) -> None:
     print(f"[DEBUG][GRU] {msg}")
@@ -47,11 +49,7 @@ def load_split(csv_path: str, text_column: str, feature_columns):
     required_cols = {text_column, "label_id", *feature_columns}
     if not required_cols.issubset(df.columns):
         raise ValueError(f"{csv_path} must contain columns: {required_cols}")
-
-    # ===== THAY ĐỔI TẠI ĐÂY =====
-    # Ép toàn bộ cột text về chữ in thường ngay khi vừa load từ CSV
-    texts = df[text_column].fillna("").astype(str).str.lower().tolist()
-    # ============================
+    texts = df[text_column].fillna("").astype(str).tolist()
     
     meta_features = (
         df[feature_columns]
@@ -78,8 +76,16 @@ def create_label_mapping(*label_lists):
 def encode_labels(labels, label2id):
     return [label2id[label] for label in labels]
 
+# def tokenize(text: str):
+#     return text.split()
 def tokenize(text: str):
-    return text.split()
+    r"""
+    Tách từ dựa trên Regex thay vì khoảng trắng.
+    - [\w_+-]+ : Giữ nguyên các từ đơn, từ ghép có gạch dưới (_), 
+                 và các thẻ đặc trưng có dấu gạch ngang/cộng (ví dụ: EMOJI_SMILE).
+    - [^\w\s]  : Bóc tách các ký tự không phải chữ/số/khoảng trắng (dấu câu) thành token độc lập.
+    """
+    return TOKEN_PATTERN.findall(text)
 
 def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
     counter = Counter()
@@ -112,34 +118,67 @@ def load_fasttext_vectors(vec_path: str, vocab=None):
     debug(f"Đã tải thành công {len(embeddings_dict)} vector từ vựng.")
     return embeddings_dict
 
+# def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
+#     """Ánh xạ FastText vectors vào vocab của model."""
+#     debug("Đang khởi tạo Ma trận Embedding cho mô hình...")
+#     if not embeddings_dict:
+#         raise ValueError("embeddings_dict is empty, cannot build embedding matrix")
+
+#     fasttext_dim = len(next(iter(embeddings_dict.values())))
+#     if embed_dim is None:
+#         embed_dim = fasttext_dim
+#     elif embed_dim != fasttext_dim:
+#         debug(
+#             f"embed_dim mismatch: embed_dim={embed_dim}, FastText dim={fasttext_dim}. "
+#             f"Tự động đồng bộ embed_dim -> {fasttext_dim}."
+#         )
+#         embed_dim = fasttext_dim
+
+#     vocab_size = len(vocab)
+#     embedding_matrix = np.random.normal(scale=0.1, size=(vocab_size, embed_dim))
+
+#     hits = 0
+#     for word, idx in vocab.items():
+#         if word == PAD_TOKEN:
+#             embedding_matrix[idx] = np.zeros(embed_dim)
+#         elif word in embeddings_dict:
+#             embedding_matrix[idx] = embeddings_dict[word]
+#             hits += 1
+
+#     debug(f"Tỷ lệ khớp FastText: {hits}/{vocab_size} từ ({(hits / vocab_size) * 100:.2f}%).")
+#     return torch.tensor(embedding_matrix, dtype=torch.float32)
 def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
-    """Ánh xạ FastText vectors vào vocab của model."""
     debug("Đang khởi tạo Ma trận Embedding cho mô hình...")
     if not embeddings_dict:
         raise ValueError("embeddings_dict is empty, cannot build embedding matrix")
 
+    # [Dành cho GRU] Đồng bộ số chiều nếu tham số truyền vào khác với vector thực tế
     fasttext_dim = len(next(iter(embeddings_dict.values())))
     if embed_dim is None:
         embed_dim = fasttext_dim
     elif embed_dim != fasttext_dim:
-        debug(
-            f"embed_dim mismatch: embed_dim={embed_dim}, FastText dim={fasttext_dim}. "
-            f"Tự động đồng bộ embed_dim -> {fasttext_dim}."
-        )
+        debug(f"embed_dim mismatch, tự động đồng bộ -> {fasttext_dim}.")
         embed_dim = fasttext_dim
 
     vocab_size = len(vocab)
-    embedding_matrix = np.random.normal(scale=0.1, size=(vocab_size, embed_dim))
-
+    
+    # 1. Khởi tạo bằng np.zeros thay vì np.random (Giải quyết triệt để PAD_TOKEN)
+    embedding_matrix = np.zeros((vocab_size, embed_dim), dtype=np.float32)
+    
     hits = 0
     for word, idx in vocab.items():
         if word == PAD_TOKEN:
-            embedding_matrix[idx] = np.zeros(embed_dim)
+            # Bỏ qua vì vị trí này đã mang giá trị 0
+            continue 
         elif word in embeddings_dict:
+            # Ghi đè vector đã huấn luyện từ trước (Pre-trained)
             embedding_matrix[idx] = embeddings_dict[word]
             hits += 1
-
-    debug(f"Tỷ lệ khớp FastText: {hits}/{vocab_size} từ ({(hits / vocab_size) * 100:.2f}%).")
+        else:
+            # CHỈ sinh số ngẫu nhiên cho từ OOV (Out-Of-Vocabulary) và UNK_TOKEN
+            embedding_matrix[idx] = np.random.normal(scale=0.1, size=(embed_dim,))
+            
+    debug(f"Tỷ lệ khớp FastText: {hits}/{vocab_size} từ ({(hits/vocab_size)*100:.2f}%).")
     return torch.tensor(embedding_matrix, dtype=torch.float32)
 
 def encode_text(text, vocab, max_len):
@@ -179,10 +218,8 @@ class GRUClassifier(nn.Module):
         pretrained_embeddings=None
     ):
         super().__init__()
-        # KIỂM TRA VÀ NẠP MA TRẬN NHÚNG
+        
         if pretrained_embeddings is not None:
-            # freeze=False cho phép cập nhật lại trọng số của FastText trong lúc train
-            # để mô hình thích nghi tốt hơn với từ lóng của dataset
             self.embedding = nn.Embedding.from_pretrained(
                 pretrained_embeddings, freeze=False, padding_idx=padding_idx
             )
@@ -260,6 +297,33 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
     return total_loss / len(loader.dataset)
 
 
+# @torch.no_grad()
+# def evaluate(model, loader, criterion, device):
+#     model.eval()
+#     total_loss = 0.0
+#     y_true, y_pred = [], []
+#     for batch_idx, (x, meta, y) in enumerate(loader, start=1):
+#         x, meta, y = x.to(device), meta.to(device), y.to(device)
+#         logits = model(x, meta)
+#         loss = criterion(logits, y)
+
+#         # THRESHOLD MOVING: Bắt tín hiệu mỉa mai/thù ghét ở ngưỡng thấp
+#         probs = torch.softmax(logits, dim=1)
+#         preds = []
+#         for p in probs:
+#             if p[2] > 0.2 and p[2] > p[1]:
+#                 preds.append(2)
+#             elif p[1] > 0.2:      # Ngưỡng Xúc phạm
+#                 preds.append(1)
+#             else:
+#                 preds.append(torch.argmax(p).item()) 
+                
+#         preds = torch.tensor(preds)
+        
+#         total_loss += loss.item() * x.size(0)
+#         y_true.extend(y.cpu().tolist())
+#         y_pred.extend(preds.cpu().tolist())
+#     return total_loss / len(loader.dataset), y_true, y_pred
 @torch.no_grad()
 def evaluate(model, loader, criterion, device):
     model.eval()
@@ -270,22 +334,24 @@ def evaluate(model, loader, criterion, device):
         logits = model(x, meta)
         loss = criterion(logits, y)
 
-        # THRESHOLD MOVING: Bắt tín hiệu mỉa mai/thù ghét ở ngưỡng thấp
         probs = torch.softmax(logits, dim=1)
-        preds = []
-        for p in probs:
-            if p[2] > 0.2 and p[2] > p[1]:
-                preds.append(2)
-            elif p[1] > 0.2:      # Ngưỡng Xúc phạm
-                preds.append(1)
-            else:
-                preds.append(torch.argmax(p).item()) 
-                
-        preds = torch.tensor(preds)
+        
+        # VECTORIZATION thay vì vòng lặp for
+        default_preds = torch.argmax(probs, dim=1)
+        
+        # Tạo mask (mặt nạ) cho từng điều kiện
+        hate_mask = (probs[:, 2] > 0.3) & (probs[:, 2] > probs[:, 1])
+        offensive_mask = (probs[:, 1] > 0.3) & ~hate_mask
+        
+        # Áp dụng threshold logic song song
+        preds = default_preds.clone()
+        preds[offensive_mask] = 1
+        preds[hate_mask] = 2
         
         total_loss += loss.item() * x.size(0)
         y_true.extend(y.cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
+        
     return total_loss / len(loader.dataset), y_true, y_pred
 
 def print_confusion_and_scores(y_true, y_pred, id2label):
@@ -403,14 +469,14 @@ def parse_args():
         default=os.path.join(get_default_data_dir(), "cc.vi.300.vec"),
         help="Đường dẫn đến file FastText (mặc định trong dataset-vihsd)",
     )
-    parser.add_argument("--hidden_size", type=int, default=128)
+    parser.add_argument("--hidden_size", type=int, default=256)
     parser.add_argument("--num_layers", type=int, default=1)
     parser.add_argument("--bidirectional", action="store_true")
     parser.add_argument("--dropout", type=float, default=0.4)
 
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=15)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--patience", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--meta_hidden_size", type=int, default=64)

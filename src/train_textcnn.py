@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix, accuracy_score, f1_score
 from torch.utils.data import Dataset, DataLoader
-
+import re
 PAD_TOKEN = "<pad>"
 UNK_TOKEN = "<unk>"
 
@@ -26,6 +26,8 @@ DEFAULT_FEATURE_COLUMNS = [
     "feat_intensifier_words",     
     "feat_elongated_ratio",       
 ]
+
+TOKEN_PATTERN = re.compile(r"[\w_+-]+|[^\w\s]", flags=re.UNICODE)
 
 def debug(msg: str) -> None:
     print(f"[DEBUG][TextCNN] {msg}")
@@ -55,25 +57,28 @@ def load_split(csv_path: str, text_column: str, feature_columns):
     labels = pd.to_numeric(df["label_id"], errors="raise").astype(int).tolist()
     return texts, meta_features, labels
 
-# def create_label_mapping(*label_lists):
-#     all_labels = []
-#     for labels in label_lists:
-#         all_labels.extend(labels)
-#     unique_labels = sorted(set(all_labels))
-#     label2id = {label: idx for idx, label in enumerate(unique_labels)}
-#     id2label = {idx: label for label, idx in label2id.items()}
-#     return label2id, id2label
 def create_label_mapping(*label_lists):
-    # Khai báo mapping tĩnh thay vì động để kiểm soát hoàn toàn hệ thống nhãn
-    label2id = {0: 0, 1: 1, 2: 2} # Đảm bảo 0: Clean, 1: Offensive, 2: Hate
+    all_labels = []
+    for labels in label_lists:
+        all_labels.extend(labels)
+        
+    unique_labels = sorted(set(all_labels))
+    label2id = {label: idx for idx, label in enumerate(unique_labels)}
     id2label = {idx: label for label, idx in label2id.items()}
+    
     return label2id, id2label
 
 def encode_labels(labels, label2id):
     return [label2id[label] for label in labels]
 
 def tokenize(text: str):
-    return text.split()
+    r"""
+    Tách từ dựa trên Regex thay vì khoảng trắng.
+    - [\w_+-]+ : Giữ nguyên các từ đơn, từ ghép có gạch dưới (_), 
+                 và các thẻ đặc trưng có dấu gạch ngang/cộng (ví dụ: EMOJI_SMILE).
+    - [^\w\s]  : Bóc tách các ký tự không phải chữ/số/khoảng trắng (dấu câu) thành token độc lập.
+    """
+    return TOKEN_PATTERN.findall(text)
 
 def build_vocab(train_texts, max_vocab_size=50000, min_freq=1):
     counter = Counter()
@@ -110,18 +115,36 @@ def load_fasttext_vectors(vec_path: str, vocab: dict, embed_dim: int = 300):
     debug(f"Đã tải thành công {len(embeddings_dict)} vector từ vựng khớp với tập dữ liệu.")
     return embeddings_dict
 
-def build_embedding_matrix(vocab, embeddings_dict, embed_dim=300):
+def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
     debug("Đang khởi tạo Ma trận Embedding cho mô hình...")
+    if not embeddings_dict:
+        raise ValueError("embeddings_dict is empty, cannot build embedding matrix")
+
+    # [Dành cho GRU] Đồng bộ số chiều nếu tham số truyền vào khác với vector thực tế
+    fasttext_dim = len(next(iter(embeddings_dict.values())))
+    if embed_dim is None:
+        embed_dim = fasttext_dim
+    elif embed_dim != fasttext_dim:
+        debug(f"embed_dim mismatch, tự động đồng bộ -> {fasttext_dim}.")
+        embed_dim = fasttext_dim
+
     vocab_size = len(vocab)
-    embedding_matrix = np.random.normal(scale=0.1, size=(vocab_size, embed_dim))
+    
+    # 1. Khởi tạo bằng np.zeros thay vì np.random (Giải quyết triệt để PAD_TOKEN)
+    embedding_matrix = np.zeros((vocab_size, embed_dim), dtype=np.float32)
     
     hits = 0
     for word, idx in vocab.items():
         if word == PAD_TOKEN:
-            embedding_matrix[idx] = np.zeros(embed_dim) 
+            # Bỏ qua vì vị trí này đã mang giá trị 0
+            continue 
         elif word in embeddings_dict:
+            # Ghi đè vector đã huấn luyện từ trước (Pre-trained)
             embedding_matrix[idx] = embeddings_dict[word]
             hits += 1
+        else:
+            # CHỈ sinh số ngẫu nhiên cho từ OOV (Out-Of-Vocabulary) và UNK_TOKEN
+            embedding_matrix[idx] = np.random.normal(scale=0.1, size=(embed_dim,))
             
     debug(f"Tỷ lệ khớp FastText: {hits}/{vocab_size} từ ({(hits/vocab_size)*100:.2f}%).")
     return torch.tensor(embedding_matrix, dtype=torch.float32)
@@ -383,7 +406,7 @@ def parse_args():
         default=os.path.join(get_default_data_dir(), "cc.vi.300.vec"),
         help="Đường dẫn đến file FastText",
     )
-    parser.add_argument("--num_filters", type=int, default=128)
+    parser.add_argument("--num_filters", type=int, default=256)
     parser.add_argument("--kernel_sizes", type=str, default="3,4,5")
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--batch_size", type=int, default=64)
@@ -427,8 +450,6 @@ def main():
     offensive_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 1]
     hate_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 2]
     
-    # [FIX]: Thay vì gán cứng, tính toán để tự động bù đắp dữ liệu tới gần mức nhãn Clean
-    # Giữ nguyên tỷ lệ đã giúp bạn đạt F1 = 0.61 (x5 và x3)
     augmented_indices = clean_indices.copy()
     augmented_indices.extend(offensive_indices * 5)
     augmented_indices.extend(hate_indices * 3)

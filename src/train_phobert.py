@@ -106,6 +106,77 @@ class TransformerDataset(Dataset):
         return item
 
 
+# class TransformerWithMetaFeatures(nn.Module):
+#     def __init__(
+#         self,
+#         model_name: str,
+#         num_labels: int,
+#         num_meta_features: int,
+#         feature_hidden_size: int,
+#         text_dropout: float, # Thêm tham số
+#         feature_dropout: float, # Thêm tham số
+#         id2label=None,
+#         label2id=None,
+#     ):
+#         super().__init__()
+#         self.encoder = AutoModel.from_pretrained(model_name)
+#         encoder_hidden_size = self.encoder.config.hidden_size
+
+#         self.text_dropout = nn.Dropout(text_dropout) # Gán text_dropout
+#         self.meta_proj = nn.Sequential(
+#             nn.BatchNorm1d(num_meta_features), # Đổi LayerNorm thành BatchNorm1d
+#             nn.Linear(num_meta_features, feature_hidden_size),
+#             nn.SiLU(),
+#             nn.Dropout(feature_dropout),
+#         )
+#         self.classifier = nn.Linear(encoder_hidden_size + feature_hidden_size, num_labels)
+
+#         self.encoder.config.num_labels = num_labels
+#         if id2label is not None:
+#             self.encoder.config.id2label = id2label
+#         if label2id is not None:
+#             self.encoder.config.label2id = label2id
+
+#     def forward(
+#         self,
+#         input_ids,
+#         attention_mask=None,
+#         token_type_ids=None,
+#         meta_features=None,
+#         labels=None,
+#     ):
+#         encoder_inputs = {
+#             "input_ids": input_ids,
+#             "attention_mask": attention_mask,
+#         }
+#         if token_type_ids is not None:
+#             encoder_inputs["token_type_ids"] = token_type_ids
+
+#         outputs = self.encoder(**encoder_inputs)
+#         pooled_output = outputs.last_hidden_state[:, 0, :]
+
+#         text_repr = self.text_dropout(pooled_output)
+#         if meta_features is None:
+#             meta_features = torch.zeros(
+#                 (text_repr.size(0), self.meta_proj[0].normalized_shape[0]),
+#                 dtype=text_repr.dtype,
+#                 device=text_repr.device,
+#             )
+#         meta_repr = self.meta_proj(meta_features)
+
+#         fused = torch.cat([text_repr, meta_repr], dim=1)
+#         logits = self.classifier(fused)
+
+#         loss = None
+#         if labels is not None:
+#             # Tần suất dựa trên phân tích: Lớp 0 (82.7%), Lớp 1 (6.68%), Lớp 2 (10.63%)
+#             # Chuẩn hóa về trung bình = 1
+#             device = logits.device
+#             class_weights = torch.tensor([1/0.827, 1/0.0668, 1/0.1063]).to(device)
+#             class_weights = class_weights / class_weights.sum() * 3
+            
+#             loss = F.cross_entropy(logits, labels, weight=class_weights)
+#         return SequenceClassifierOutput(loss=loss, logits=logits)
 class TransformerWithMetaFeatures(nn.Module):
     def __init__(
         self,
@@ -113,8 +184,9 @@ class TransformerWithMetaFeatures(nn.Module):
         num_labels: int,
         num_meta_features: int,
         feature_hidden_size: int,
-        text_dropout: float, # Thêm tham số
-        feature_dropout: float, # Thêm tham số
+        text_dropout: float,
+        feature_dropout: float,
+        class_weights=None, # THÊM THAM SỐ CLASS WEIGHTS
         id2label=None,
         label2id=None,
     ):
@@ -122,9 +194,9 @@ class TransformerWithMetaFeatures(nn.Module):
         self.encoder = AutoModel.from_pretrained(model_name)
         encoder_hidden_size = self.encoder.config.hidden_size
 
-        self.text_dropout = nn.Dropout(text_dropout) # Gán text_dropout
+        self.text_dropout = nn.Dropout(text_dropout)
         self.meta_proj = nn.Sequential(
-            nn.BatchNorm1d(num_meta_features), # Đổi LayerNorm thành BatchNorm1d
+            nn.BatchNorm1d(num_meta_features),
             nn.Linear(num_meta_features, feature_hidden_size),
             nn.SiLU(),
             nn.Dropout(feature_dropout),
@@ -136,6 +208,12 @@ class TransformerWithMetaFeatures(nn.Module):
             self.encoder.config.id2label = id2label
         if label2id is not None:
             self.encoder.config.label2id = label2id
+
+        # ĐĂNG KÝ BUFFER CHO PYTORCH
+        if class_weights is not None:
+            self.register_buffer('class_weights', class_weights)
+        else:
+            self.class_weights = None
 
     def forward(
         self,
@@ -169,13 +247,9 @@ class TransformerWithMetaFeatures(nn.Module):
 
         loss = None
         if labels is not None:
-            # Tần suất dựa trên phân tích: Lớp 0 (82.7%), Lớp 1 (6.68%), Lớp 2 (10.63%)
-            # Chuẩn hóa về trung bình = 1
-            device = logits.device
-            class_weights = torch.tensor([1/0.827, 1/0.0668, 1/0.1063]).to(device)
-            class_weights = class_weights / class_weights.sum() * 3
+            # SỬ DỤNG TRỌNG SỐ ĐỘNG TỪ BỘ ĐỆM
+            loss = F.cross_entropy(logits, labels, weight=self.class_weights)
             
-            loss = F.cross_entropy(logits, labels, weight=class_weights)
         return SequenceClassifierOutput(loss=loss, logits=logits)
 
 
@@ -201,41 +275,77 @@ def train_one_epoch(model, loader, optimizer, scheduler, device):
 
     return total_loss / len(loader.dataset)
 
+# @torch.no_grad()
+# def evaluate(model, loader, device):
+#     model.eval()
+#     total_loss = 0.0
+#     y_true, y_pred = [], []
+#     debug(f"Evaluating with {len(loader)} batches")
+
+#     for batch_idx, batch in enumerate(loader, start=1):
+#         batch = {k: v.to(device) for k, v in batch.items()}
+#         outputs = model(**batch)
+
+#         loss = outputs.loss
+#         logits = outputs.logits
+        
+#         # --- BẬT LẠI THRESHOLD MOVING ---
+#         probs = torch.softmax(logits, dim=1)
+#         batch_preds = []
+#         for p in probs:
+#             if p[2] > 0.30:        # Mốc Thù địch: 30%
+#                 batch_preds.append(2)
+#             elif p[1] > 0.25:      # Mốc Xúc phạm: 25%
+#                 batch_preds.append(1)
+#             else:
+#                 batch_preds.append(torch.argmax(p).item())
+                
+#         preds = torch.tensor(batch_preds)
+#         # --------------------------------
+
+#         total_loss += loss.item() * batch["labels"].size(0)
+#         y_true.extend(batch["labels"].cpu().tolist())
+#         y_pred.extend(preds.cpu().tolist())
+        
+#         if batch_idx % 20 == 0 or batch_idx == len(loader):
+#             debug(f"Eval batch {batch_idx}/{len(loader)}")
+
+#     return total_loss / len(loader.dataset), y_true, y_pred
 @torch.no_grad()
 def evaluate(model, loader, device):
     model.eval()
     total_loss = 0.0
     y_true, y_pred = [], []
-    debug(f"Evaluating with {len(loader)} batches")
 
     for batch_idx, batch in enumerate(loader, start=1):
+        # 1. Chuyển toàn bộ tensor trong dictionary sang thiết bị xử lý (GPU/CPU)
         batch = {k: v.to(device) for k, v in batch.items()}
+        
+        # 2. Truyền unpack dictionary vào mô hình
         outputs = model(**batch)
-
+        
+        # 3. Trích xuất loss và logits trực tiếp từ outputs của Transformer
         loss = outputs.loss
         logits = outputs.logits
         
-        # --- BẬT LẠI THRESHOLD MOVING ---
+        # 4. Áp dụng logic Vectorization Threshold Moving
         probs = torch.softmax(logits, dim=1)
-        batch_preds = []
-        for p in probs:
-            if p[2] > 0.30:        # Mốc Thù địch: 30%
-                batch_preds.append(2)
-            elif p[1] > 0.25:      # Mốc Xúc phạm: 25%
-                batch_preds.append(1)
-            else:
-                batch_preds.append(torch.argmax(p).item())
-                
-        preds = torch.tensor(batch_preds)
-        # --------------------------------
-
+        
+        default_preds = torch.argmax(probs, dim=1)
+        
+        # Sử dụng ngưỡng chuẩn hóa cho PhoBERT (Ví dụ: 0.3 cho Hate, 0.25 cho Offensive)
+        hate_mask = (probs[:, 2] > 0.30) & (probs[:, 2] > probs[:, 1])
+        offensive_mask = (probs[:, 1] > 0.25) & ~hate_mask
+        
+        preds = default_preds.clone()
+        preds[offensive_mask] = 1
+        preds[hate_mask] = 2
+        
+        # 5. Cập nhật metric
         total_loss += loss.item() * batch["labels"].size(0)
         y_true.extend(batch["labels"].cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
         
-        if batch_idx % 20 == 0 or batch_idx == len(loader):
-            debug(f"Eval batch {batch_idx}/{len(loader)}")
-
     return total_loss / len(loader.dataset), y_true, y_pred
 
 
@@ -440,6 +550,14 @@ def run_experiment(
     hf_id2label = {i: str(id2label[i]) for i in range(num_labels)}
     hf_label2id = {str(id2label[i]): i for i in range(num_labels)}
 
+    debug("Calculating dynamic class weights based on Train distribution")
+    # TÍNH TOÁN TRỌNG SỐ ĐỘNG
+    class_counts = np.bincount(train_labels)
+    total_samples = len(train_labels)
+    # Áp dụng công thức: w = N / (C * N_c)
+    calculated_weights = total_samples / (num_labels * class_counts)
+    class_weights_tensor = torch.tensor(calculated_weights, dtype=torch.float)
+    debug(f"Computed Class Weights: {class_weights_tensor.tolist()}")
     debug(f"Loading model: {args.model_name}")
     model = TransformerWithMetaFeatures(
         model_name=args.model_name,
@@ -448,6 +566,7 @@ def run_experiment(
         feature_hidden_size=args.feature_hidden_size,
         text_dropout=args.text_dropout,       # Cập nhật
         feature_dropout=args.feature_dropout, # Cập nhật
+        class_weights=class_weights_tensor,  # TIÊM TENSOR VÀO MÔ HÌNH
         id2label=hf_id2label,
         label2id=hf_label2id,
     )
