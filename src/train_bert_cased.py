@@ -8,6 +8,7 @@ if __name__ == "__main__":
         default_model_name="bert-base-multilingual-cased",
         default_output_subdir="bert_cased",
         run_name="BERT cased",
-        default_text_column="transformer_text"
+        default_text_column="transformer_text",
+        model_prefix="mbert"
     )
     print("[DEBUG][BERT-cased] Wrapper finished")

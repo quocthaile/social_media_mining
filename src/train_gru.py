@@ -49,7 +49,7 @@ def load_split(csv_path: str, text_column: str, feature_columns):
     required_cols = {text_column, "label_id", *feature_columns}
     if not required_cols.issubset(df.columns):
         raise ValueError(f"{csv_path} must contain columns: {required_cols}")
-    texts = df[text_column].fillna("").astype(str).tolist()
+    texts = df[text_column].fillna("").astype(str).str.lower().tolist()
     
     meta_features = (
         df[feature_columns]

@@ -9,5 +9,6 @@ if __name__ == "__main__":
         default_output_subdir="xlm_roberta_base",
         run_name="XLM-R base",
         default_text_column="transformer_text",
+        model_prefix="xlmr"
     )
     print("[DEBUG][XLM-R-base] Wrapper finished")

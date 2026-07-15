@@ -105,78 +105,6 @@ class TransformerDataset(Dataset):
         item["labels"] = torch.tensor(self.labels[idx], dtype=torch.long)
         return item
 
-
-# class TransformerWithMetaFeatures(nn.Module):
-#     def __init__(
-#         self,
-#         model_name: str,
-#         num_labels: int,
-#         num_meta_features: int,
-#         feature_hidden_size: int,
-#         text_dropout: float, # Thêm tham số
-#         feature_dropout: float, # Thêm tham số
-#         id2label=None,
-#         label2id=None,
-#     ):
-#         super().__init__()
-#         self.encoder = AutoModel.from_pretrained(model_name)
-#         encoder_hidden_size = self.encoder.config.hidden_size
-
-#         self.text_dropout = nn.Dropout(text_dropout) # Gán text_dropout
-#         self.meta_proj = nn.Sequential(
-#             nn.BatchNorm1d(num_meta_features), # Đổi LayerNorm thành BatchNorm1d
-#             nn.Linear(num_meta_features, feature_hidden_size),
-#             nn.SiLU(),
-#             nn.Dropout(feature_dropout),
-#         )
-#         self.classifier = nn.Linear(encoder_hidden_size + feature_hidden_size, num_labels)
-
-#         self.encoder.config.num_labels = num_labels
-#         if id2label is not None:
-#             self.encoder.config.id2label = id2label
-#         if label2id is not None:
-#             self.encoder.config.label2id = label2id
-
-#     def forward(
-#         self,
-#         input_ids,
-#         attention_mask=None,
-#         token_type_ids=None,
-#         meta_features=None,
-#         labels=None,
-#     ):
-#         encoder_inputs = {
-#             "input_ids": input_ids,
-#             "attention_mask": attention_mask,
-#         }
-#         if token_type_ids is not None:
-#             encoder_inputs["token_type_ids"] = token_type_ids
-
-#         outputs = self.encoder(**encoder_inputs)
-#         pooled_output = outputs.last_hidden_state[:, 0, :]
-
-#         text_repr = self.text_dropout(pooled_output)
-#         if meta_features is None:
-#             meta_features = torch.zeros(
-#                 (text_repr.size(0), self.meta_proj[0].normalized_shape[0]),
-#                 dtype=text_repr.dtype,
-#                 device=text_repr.device,
-#             )
-#         meta_repr = self.meta_proj(meta_features)
-
-#         fused = torch.cat([text_repr, meta_repr], dim=1)
-#         logits = self.classifier(fused)
-
-#         loss = None
-#         if labels is not None:
-#             # Tần suất dựa trên phân tích: Lớp 0 (82.7%), Lớp 1 (6.68%), Lớp 2 (10.63%)
-#             # Chuẩn hóa về trung bình = 1
-#             device = logits.device
-#             class_weights = torch.tensor([1/0.827, 1/0.0668, 1/0.1063]).to(device)
-#             class_weights = class_weights / class_weights.sum() * 3
-            
-#             loss = F.cross_entropy(logits, labels, weight=class_weights)
-#         return SequenceClassifierOutput(loss=loss, logits=logits)
 class TransformerWithMetaFeatures(nn.Module):
     def __init__(
         self,
@@ -209,7 +137,6 @@ class TransformerWithMetaFeatures(nn.Module):
         if label2id is not None:
             self.encoder.config.label2id = label2id
 
-        # ĐĂNG KÝ BUFFER CHO PYTORCH
         if class_weights is not None:
             self.register_buffer('class_weights', class_weights)
         else:
@@ -318,30 +245,15 @@ def evaluate(model, loader, device):
     y_true, y_pred = [], []
 
     for batch_idx, batch in enumerate(loader, start=1):
-        # 1. Chuyển toàn bộ tensor trong dictionary sang thiết bị xử lý (GPU/CPU)
         batch = {k: v.to(device) for k, v in batch.items()}
-        
-        # 2. Truyền unpack dictionary vào mô hình
         outputs = model(**batch)
         
-        # 3. Trích xuất loss và logits trực tiếp từ outputs của Transformer
         loss = outputs.loss
         logits = outputs.logits
         
-        # 4. Áp dụng logic Vectorization Threshold Moving
-        probs = torch.softmax(logits, dim=1)
+        # CHỈ DÙNG ARGMAX TINH KHIẾT (Vì Loss đã có Class Weights)
+        preds = torch.argmax(logits, dim=1)
         
-        default_preds = torch.argmax(probs, dim=1)
-        
-        # Sử dụng ngưỡng chuẩn hóa cho PhoBERT (Ví dụ: 0.3 cho Hate, 0.25 cho Offensive)
-        hate_mask = (probs[:, 2] > 0.30) & (probs[:, 2] > probs[:, 1])
-        offensive_mask = (probs[:, 1] > 0.25) & ~hate_mask
-        
-        preds = default_preds.clone()
-        preds[offensive_mask] = 1
-        preds[hate_mask] = 2
-        
-        # 5. Cập nhật metric
         total_loss += loss.item() * batch["labels"].size(0)
         y_true.extend(batch["labels"].cpu().tolist())
         y_pred.extend(preds.cpu().tolist())
@@ -436,7 +348,8 @@ def run_experiment(
     default_model_name="vinai/phobert-base",
     default_output_subdir="phobert",
     run_name="PhoBERT",
-    default_text_column="tokens_text"  # <--- SỬA TẠI ĐÂY: Mặc định PhoBERT dùng text CÓ gạch dưới
+    default_text_column="tokens_text",
+    model_prefix="phobert"
 ):
     model_prefix = "phobert"
     parser = argparse.ArgumentParser(description=f"Train {run_name}")
@@ -453,15 +366,15 @@ def run_experiment(
     
     parser.add_argument("--feature_columns", type=str, default=",".join(DEFAULT_FEATURE_COLUMNS))
     parser.add_argument("--max_len", type=int, default=128)
-    parser.add_argument("--batch_size", type=int, default=32) # Tăng từ 16 lên 32
-    parser.add_argument("--epochs", type=int, default=10)     # Tăng từ 3 lên 10
+    parser.add_argument("--batch_size", type=int, default=32) 
+    parser.add_argument("--epochs", type=int, default=15)     
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--feature_hidden_size", type=int, default=32) # Giảm từ 64 xuống 32
-    parser.add_argument("--text_dropout", type=float, default=0.1)     # Thêm mới
-    parser.add_argument("--feature_dropout", type=float, default=0.3)  # Tăng từ 0.2 lên 0.3
+    parser.add_argument("--feature_hidden_size", type=int, default=32)
+    parser.add_argument("--text_dropout", type=float, default=0.1)     
+    parser.add_argument("--feature_dropout", type=float, default=0.3)
     parser.add_argument("--warmup_ratio", type=float, default=0.1)
-    parser.add_argument("--patience", type=int, default=3)    # Tăng từ 2 lên 3
+    parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--output_dir", type=str, default=get_default_output_dir(default_output_subdir))
@@ -554,9 +467,10 @@ def run_experiment(
     # TÍNH TOÁN TRỌNG SỐ ĐỘNG
     class_counts = np.bincount(train_labels)
     total_samples = len(train_labels)
-    # Áp dụng công thức: w = N / (C * N_c)
-    calculated_weights = total_samples / (num_labels * class_counts)
+
+    calculated_weights = np.sqrt(total_samples / (num_labels * class_counts))
     class_weights_tensor = torch.tensor(calculated_weights, dtype=torch.float)
+    debug(f"Computed Smoothed Class Weights: {class_weights_tensor.tolist()}")
     debug(f"Computed Class Weights: {class_weights_tensor.tolist()}")
     debug(f"Loading model: {args.model_name}")
     model = TransformerWithMetaFeatures(
@@ -564,9 +478,9 @@ def run_experiment(
         num_labels=num_labels,
         num_meta_features=len(feature_columns),
         feature_hidden_size=args.feature_hidden_size,
-        text_dropout=args.text_dropout,       # Cập nhật
-        feature_dropout=args.feature_dropout, # Cập nhật
-        class_weights=class_weights_tensor,  # TIÊM TENSOR VÀO MÔ HÌNH
+        text_dropout=args.text_dropout,       
+        feature_dropout=args.feature_dropout, 
+        class_weights=class_weights_tensor,
         id2label=hf_id2label,
         label2id=hf_label2id,
     )
@@ -634,7 +548,7 @@ def run_experiment(
         confusion_matrix_file=args.confusion_matrix_file,
         ovr_metrics_file=args.ovr_metrics_file,
         misclassified_file=args.misclassified_file,
-        model_prefix=model_prefix,
+        model_prefix=model_prefix
     )
 
     os.makedirs(args.output_dir, exist_ok=True)
