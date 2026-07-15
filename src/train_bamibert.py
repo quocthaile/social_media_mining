@@ -21,19 +21,17 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 
 
 DEFAULT_FEATURE_COLUMNS = [
-    "feat_log_num_tokens",
-    "feat_log_num_chars",
-    "feat_avg_token_len",
-    "feat_emoji_density",
-    "feat_punct_density",
-    "feat_upper_ratio",
-    "feat_digit_ratio",
-    "feat_bad_word_density",
-    "feat_elongated_ratio",
-    "feat_exclamation_density",
-    "feat_allcaps_ratio",
+    "feat_log_num_tokens",        
+    "feat_upper_ratio",           
+    "feat_emoji_density",         
+    "feat_bad_word_density",      
+    "feat_aggressive_pronoun",    
+    "feat_laugh_density",         
+    "feat_sarcastic_punct",       
+    "feat_scare_quotes",          
+    "feat_intensifier_words",     
+    "feat_elongated_ratio",       
 ]
-
 
 def debug(msg: str) -> None:
     print(f"[DEBUG][BamiBERT] {msg}")
