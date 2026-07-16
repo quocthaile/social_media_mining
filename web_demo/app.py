@@ -1,5 +1,14 @@
 import os
 import sys
+
+# Monkeypatch tokenizers.models.Unigram for Python 3.14 compatibility
+try:
+    import tokenizers.models
+    original_unigram = tokenizers.models.Unigram
+    tokenizers.models.Unigram = lambda *args, **kwargs: original_unigram(list(kwargs.pop('vocab').items()), *args, **kwargs) if 'vocab' in kwargs and isinstance(kwargs['vocab'], dict) else original_unigram(*args, **kwargs)
+except Exception:
+    pass
+
 import re
 import unicodedata
 import numpy as np
@@ -711,7 +720,10 @@ class ModelManager:
             # Tải tokenizer tương ứng
             model_dir = os.path.dirname(path)
             if "bamibert" in checkpoint["model_name"].lower():
-                tokenizer = PreTrainedTokenizerFast.from_pretrained(model_dir)
+                try:
+                    tokenizer = PreTrainedTokenizerFast.from_pretrained(model_dir)
+                except Exception:
+                    tokenizer = AutoTokenizer.from_pretrained(checkpoint["model_name"])
             else:
                 use_fast = False if "phobert" in checkpoint["model_name"].lower() else True
                 tokenizer = AutoTokenizer.from_pretrained(checkpoint["model_name"], use_fast=use_fast)
