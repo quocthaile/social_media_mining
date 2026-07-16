@@ -115,6 +115,15 @@ class ModelManager:
         self.model = None
         self.tokenizer = None
         self.vocab = None
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif torch.backends.mps.is_available():
+            try:
+                torch.mps.empty_cache()
+            except Exception:
+                pass
 
         if mtype == "transformer":
             # Khởi tạo Transformer
@@ -291,6 +300,114 @@ class ModelManager:
             },
             "meta_features": {k: float(v) for k, v in meta_features.items()},
         }
+
+    def predict_batch(self, texts, batch_size=32):
+        """Suy luận (Inference) theo lô (batch) để tối ưu hiệu năng."""
+        if not self.model:
+            return []
+
+        results = []
+        # 1. Tiền xử lý
+        cleaned_texts = []
+        remove_sw = True if self.model_type in ["gru", "textcnn"] else False
+        
+        for text in texts:
+            clean_text = unicode_normalization(text)
+            clean_text = remove_noise(clean_text)
+            clean_text = extract_emoji_features(clean_text)
+            clean_text = normalize_lengthened_words(clean_text)
+            clean_text = replace_slang_and_abbreviations_cased(clean_text)
+            clean_text = replace_compound_words(clean_text)
+            clean_text = segment_and_remove_stopwords(clean_text, remove_stopwords=remove_sw).strip()
+            cleaned_texts.append(clean_text)
+
+        feature_columns = self.checkpoint["feature_columns"]
+        max_len = self.checkpoint["args"].get("max_len", 128)
+        use_threshold_moving = self.checkpoint.get("args", {}).get("use_threshold_moving", True)
+
+        # 2. Xử lý theo từng batch
+        for idx in range(0, len(texts), batch_size):
+            batch_orig = texts[idx:idx+batch_size]
+            batch_clean = cleaned_texts[idx:idx+batch_size]
+
+            # Trích xuất đặc trưng meta
+            batch_meta = []
+            for ct in batch_clean:
+                meta_feat = extract_feature_row(ct)
+                batch_meta.append([meta_feat[col] for col in feature_columns])
+            meta_tensor = torch.tensor(batch_meta, dtype=torch.float, device=device)
+
+            if self.model_type == "transformer":
+                transformer_texts = [ct.replace("_", " ") for ct in batch_clean]
+                inputs = self.tokenizer(
+                    transformer_texts,
+                    truncation=True,
+                    padding="max_length",
+                    max_length=max_len,
+                    return_tensors="pt",
+                )
+                inputs = {k: v.to(device) for k, v in inputs.items()}
+
+                with torch.no_grad():
+                    outputs = self.model(
+                        input_ids=inputs["input_ids"],
+                        attention_mask=inputs.get("attention_mask"),
+                        token_type_ids=inputs.get("token_type_ids"),
+                        meta_features=meta_tensor,
+                    )
+                    logits = outputs.logits
+            else:
+                batch_tokens = []
+                pad_idx = self.vocab.get("<pad>", 0)
+                unk_idx = self.vocab.get("<unk>", 1)
+
+                for ct in batch_clean:
+                    tokens = ct.split()
+                    token_ids = [self.vocab.get(t, unk_idx) for t in tokens[:max_len]]
+                    if len(token_ids) < max_len:
+                        token_ids += [pad_idx] * (max_len - len(token_ids))
+                    batch_tokens.append(token_ids)
+
+                input_tensor = torch.tensor(batch_tokens, dtype=torch.long, device=device)
+                with torch.no_grad():
+                    logits = self.model(input_tensor, meta_tensor)
+
+            probs = torch.softmax(logits, dim=1).cpu().numpy()
+
+            # 3. Phân lớp & Highlight từ độc hại cho từng phần tử
+            for i, p in enumerate(probs):
+                orig_text = batch_orig[i]
+                ct = batch_clean[i]
+
+                if use_threshold_moving:
+                    if p[2] > 0.25:
+                        pred_label_id = 2
+                    elif p[1] > 0.25:
+                        pred_label_id = 1
+                    else:
+                        pred_label_id = int(np.argmax(p))
+                else:
+                    pred_label_id = int(np.argmax(p))
+
+                highlighted_text, detected_bad_words = highlight_bad_words(orig_text)
+                meta_feat_single = extract_feature_row(ct)
+
+                results.append({
+                    "raw_text": orig_text,
+                    "clean_text": ct,
+                    "highlighted_text": highlighted_text,
+                    "detected_bad_words": detected_bad_words,
+                    "label_id": pred_label_id,
+                    "label_name": label_names[pred_label_id],
+                    "probs": {
+                        "clean": float(p[0]),
+                        "offensive": float(p[1]),
+                        "hate": float(p[2]),
+                    },
+                    "meta_features": {k: float(v) for k, v in meta_feat_single.items()},
+                })
+
+        return results
 
     def get_test_metrics(self):
         """Chạy đánh giá trên tập test để tính toán độ chính xác và Confusion Matrix thực tế (có lưu cache ra file JSON)."""
@@ -527,18 +644,21 @@ def api_predict_batch():
                 if text_col is None:
                     text_col = df.columns[0]
 
+                raw_texts = df[text_col].fillna("").astype(str).tolist()
+                
+                # Chạy dự đoán dạng batch để tăng tốc
+                batch_results = manager.predict_batch(raw_texts)
+                
                 results = []
-                for val in df[text_col].fillna("").astype(str).tolist():
-                    res = manager.predict(val)
-                    if res:
-                        results.append({
-                            "text": val,
-                            "label_name": res["label_name"],
-                            "label_id": res["label_id"],
-                            "prob_clean": res["probs"]["clean"],
-                            "prob_offensive": res["probs"]["offensive"],
-                            "prob_hate": res["probs"]["hate"],
-                        })
+                for res in batch_results:
+                    results.append({
+                        "text": res["raw_text"],
+                        "label_name": res["label_name"],
+                        "label_id": res["label_id"],
+                        "prob_clean": res["probs"]["clean"],
+                        "prob_offensive": res["probs"]["offensive"],
+                        "prob_hate": res["probs"]["hate"],
+                    })
 
                 out_filename = "predicted_" + filename
                 out_filepath = os.path.join(app.config["UPLOAD_FOLDER"], out_filename)
@@ -563,11 +683,7 @@ def api_predict_batch():
     if not texts:
         return jsonify({"error": "Danh sách bình luận trống"}), 400
 
-    results = []
-    for text in texts:
-        res = manager.predict(text)
-        if res:
-            results.append(res)
+    results = manager.predict_batch(texts)
     return jsonify({"results": results})
 
 @app.route("/download/<filename>")

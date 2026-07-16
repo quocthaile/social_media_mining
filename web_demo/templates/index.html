@@ -261,17 +261,17 @@
                                 <table class="academic-table">
                                     <thead>
                                         <tr>
-                                            <th>Chỉ số (Metric)</th>
+                                            <th>Chỉ số</th>
                                             <th>Giá trị của mô hình</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         <tr>
-                                            <td><strong>Accuracy (Độ chính xác tổng thể)</strong></td>
+                                            <td><strong>Accuracy</strong></td>
                                             <td><span id="stats-accuracy" class="badge badge-success">-</span></td>
                                         </tr>
                                         <tr>
-                                            <td><strong>F1-macro (Chỉ số F1 trung bình)</strong></td>
+                                            <td><strong>F1-macro</strong></td>
                                             <td><span id="stats-f1" class="badge badge-primary">-</span></td>
                                         </tr>
                                     </tbody>
@@ -283,27 +283,27 @@
                                 <table class="academic-table confusion-matrix-table">
                                     <thead>
                                         <tr>
-                                            <th>Thực tế (Origin) \ Dự đoán</th>
-                                            <th>Prediction_0 (Sạch)</th>
-                                            <th>Prediction_1 (Xúc phạm)</th>
-                                            <th>Prediction_2 (Thù địch)</th>
+                                            <th>Thực tế / Dự đoán</th>
+                                            <th>0 (CLEAN)</th>
+                                            <th>1 (OFFENSIVE)</th>
+                                            <th>2 (HATE)</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         <tr>
-                                            <td><strong>Origin_0 (Sạch)</strong></td>
+                                            <td><strong>0 (CLEAN)</strong></td>
                                             <td id="cm-0-0" class="diag">-</td>
                                             <td id="cm-0-1" class="miss">-</td>
                                             <td id="cm-0-2" class="miss">-</td>
                                         </tr>
                                         <tr>
-                                            <td><strong>Origin_1 (Xúc phạm)</strong></td>
+                                            <td><strong>1 (OFFENSIVE)</strong></td>
                                             <td id="cm-1-0" class="miss">-</td>
                                             <td id="cm-1-1" class="diag">-</td>
                                             <td id="cm-1-2" class="miss">-</td>
                                         </tr>
                                         <tr>
-                                            <td><strong>Origin_2 (Thù địch)</strong></td>
+                                            <td><strong>2 (HATE)</strong></td>
                                             <td id="cm-2-0" class="miss">-</td>
                                             <td id="cm-2-1" class="miss">-</td>
                                             <td id="cm-2-2" class="diag">-</td>
@@ -319,9 +319,12 @@
 
         <!-- Footer -->
         <footer class="app-footer">
-            Đột phá xử lý tiếng Việt lệch nhãn trên mạng xã hội.</p>
+            <p>Đột phá xử lý tiếng Việt lệch nhãn trên mạng xã hội.</p>
         </footer>
     </div>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container" class="toast-container"></div>
 
     <!-- Scripts -->
     <script src="/static/app.js"></script>

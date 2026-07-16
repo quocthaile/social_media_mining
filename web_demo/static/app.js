@@ -1,4 +1,31 @@
 document.addEventListener("DOMContentLoaded", () => {
+    // Toast Notification System
+    const toastContainer = document.getElementById("toast-container");
+    function showToast(message, type = "info") {
+        if (!toastContainer) return;
+        const toast = document.createElement("div");
+        toast.className = `toast toast-${type}`;
+        
+        let iconClass = "fa-circle-info";
+        if (type === "success") iconClass = "fa-circle-check";
+        if (type === "error") iconClass = "fa-circle-xmark";
+        
+        toast.innerHTML = `
+            <i class="fa-solid ${iconClass} toast-icon"></i>
+            <span class="toast-message">${message}</span>
+        `;
+        
+        toastContainer.appendChild(toast);
+        
+        // Auto remove after 4s
+        setTimeout(() => {
+            toast.classList.add("hide");
+            toast.addEventListener("transitionend", () => {
+                toast.remove();
+            });
+        }, 4000);
+    }
+
     // Navigation Tabs
     const tabs = document.querySelectorAll(".nav-tab");
     const panes = document.querySelectorAll(".tab-pane");
@@ -164,7 +191,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .then(res => res.json())
         .then(data => {
             if (data.error) {
-                alert(data.error);
+                showToast(data.error, "error");
                 return;
             }
             selectedModelKey = modelKey;
@@ -185,7 +212,7 @@ document.addEventListener("DOMContentLoaded", () => {
         })
         .catch(err => {
             console.error(err);
-            alert("Lỗi kết nối khi chuyển mô hình!");
+            showToast("Lỗi kết nối khi chuyển mô hình!", "error");
             modelDropdown.classList.remove("disabled");
             loadModelStats();
         });
@@ -248,7 +275,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .then(res => res.json())
         .then(data => {
             if (data.error) {
-                alert(data.error);
+                showToast(data.error, "error");
                 return;
             }
 
@@ -304,7 +331,7 @@ document.addEventListener("DOMContentLoaded", () => {
         })
         .catch(err => {
             console.error(err);
-            alert("Đã xảy ra lỗi khi phân tích bình luận!");
+            showToast("Đã xảy ra lỗi khi phân tích bình luận!", "error");
         })
         .finally(() => {
             btnAnalyze.disabled = false;
@@ -447,7 +474,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function handleSelectedFile(file) {
         if (!file.name.endsWith(".csv")) {
-            alert("Vui lòng chọn file định dạng .csv");
+            showToast("Vui lòng chọn file định dạng .csv", "error");
             return;
         }
         selectedFileName.textContent = file.name;
@@ -471,7 +498,7 @@ document.addEventListener("DOMContentLoaded", () => {
         .then(res => res.json())
         .then(data => {
             if (data.error) {
-                alert(data.error);
+                showToast(data.error, "error");
                 return;
             }
 
@@ -505,7 +532,7 @@ document.addEventListener("DOMContentLoaded", () => {
         })
         .catch(err => {
             console.error(err);
-            alert("Lỗi khi gửi tệp đi phân tích!");
+            showToast("Lỗi khi gửi tệp đi phân tích!", "error");
         })
         .finally(() => {
             btnBatchProcess.disabled = false;
