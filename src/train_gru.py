@@ -118,41 +118,11 @@ def load_fasttext_vectors(vec_path: str, vocab=None):
     debug(f"Đã tải thành công {len(embeddings_dict)} vector từ vựng.")
     return embeddings_dict
 
-# def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
-#     """Ánh xạ FastText vectors vào vocab của model."""
-#     debug("Đang khởi tạo Ma trận Embedding cho mô hình...")
-#     if not embeddings_dict:
-#         raise ValueError("embeddings_dict is empty, cannot build embedding matrix")
-
-#     fasttext_dim = len(next(iter(embeddings_dict.values())))
-#     if embed_dim is None:
-#         embed_dim = fasttext_dim
-#     elif embed_dim != fasttext_dim:
-#         debug(
-#             f"embed_dim mismatch: embed_dim={embed_dim}, FastText dim={fasttext_dim}. "
-#             f"Tự động đồng bộ embed_dim -> {fasttext_dim}."
-#         )
-#         embed_dim = fasttext_dim
-
-#     vocab_size = len(vocab)
-#     embedding_matrix = np.random.normal(scale=0.1, size=(vocab_size, embed_dim))
-
-#     hits = 0
-#     for word, idx in vocab.items():
-#         if word == PAD_TOKEN:
-#             embedding_matrix[idx] = np.zeros(embed_dim)
-#         elif word in embeddings_dict:
-#             embedding_matrix[idx] = embeddings_dict[word]
-#             hits += 1
-
-#     debug(f"Tỷ lệ khớp FastText: {hits}/{vocab_size} từ ({(hits / vocab_size) * 100:.2f}%).")
-#     return torch.tensor(embedding_matrix, dtype=torch.float32)
 def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
     debug("Đang khởi tạo Ma trận Embedding cho mô hình...")
     if not embeddings_dict:
         raise ValueError("embeddings_dict is empty, cannot build embedding matrix")
 
-    # [Dành cho GRU] Đồng bộ số chiều nếu tham số truyền vào khác với vector thực tế
     fasttext_dim = len(next(iter(embeddings_dict.values())))
     if embed_dim is None:
         embed_dim = fasttext_dim
@@ -162,20 +132,16 @@ def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
 
     vocab_size = len(vocab)
     
-    # 1. Khởi tạo bằng np.zeros thay vì np.random (Giải quyết triệt để PAD_TOKEN)
     embedding_matrix = np.zeros((vocab_size, embed_dim), dtype=np.float32)
     
     hits = 0
     for word, idx in vocab.items():
         if word == PAD_TOKEN:
-            # Bỏ qua vì vị trí này đã mang giá trị 0
             continue 
         elif word in embeddings_dict:
-            # Ghi đè vector đã huấn luyện từ trước (Pre-trained)
             embedding_matrix[idx] = embeddings_dict[word]
             hits += 1
         else:
-            # CHỈ sinh số ngẫu nhiên cho từ OOV (Out-Of-Vocabulary) và UNK_TOKEN
             embedding_matrix[idx] = np.random.normal(scale=0.1, size=(embed_dim,))
             
     debug(f"Tỷ lệ khớp FastText: {hits}/{vocab_size} từ ({(hits/vocab_size)*100:.2f}%).")
@@ -236,21 +202,10 @@ class GRUClassifier(nn.Module):
         )
         out_dim = hidden_size * (2 if bidirectional else 1)
         self.dropout = nn.Dropout(dropout)
-        # self.meta_proj = None
-        # if num_meta_features > 0:
-        #     self.meta_proj = nn.Sequential(
-        #         nn.Linear(num_meta_features, meta_hidden_size),
-        #         nn.ReLU(),
-        #         nn.Dropout(dropout),
-        #     )
-        #     out_dim = out_dim + meta_hidden_size
         self.meta_proj = None
         if num_meta_features > 0:
             self.meta_proj = nn.Sequential(
-                # BƯỚC 1: Ép 11 features về cùng biên độ N(0,1)
                 nn.BatchNorm1d(num_meta_features), 
-                
-                # BƯỚC 2: Chiếu qua lớp Linear để học mối tương quan
                 nn.Linear(num_meta_features, meta_hidden_size),
                 nn.SiLU(),
                 nn.Dropout(dropout),
@@ -296,34 +251,6 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
     return total_loss / len(loader.dataset)
 
-
-# @torch.no_grad()
-# def evaluate(model, loader, criterion, device):
-#     model.eval()
-#     total_loss = 0.0
-#     y_true, y_pred = [], []
-#     for batch_idx, (x, meta, y) in enumerate(loader, start=1):
-#         x, meta, y = x.to(device), meta.to(device), y.to(device)
-#         logits = model(x, meta)
-#         loss = criterion(logits, y)
-
-#         # THRESHOLD MOVING: Bắt tín hiệu mỉa mai/thù ghét ở ngưỡng thấp
-#         probs = torch.softmax(logits, dim=1)
-#         preds = []
-#         for p in probs:
-#             if p[2] > 0.2 and p[2] > p[1]:
-#                 preds.append(2)
-#             elif p[1] > 0.2:      # Ngưỡng Xúc phạm
-#                 preds.append(1)
-#             else:
-#                 preds.append(torch.argmax(p).item()) 
-                
-#         preds = torch.tensor(preds)
-        
-#         total_loss += loss.item() * x.size(0)
-#         y_true.extend(y.cpu().tolist())
-#         y_pred.extend(preds.cpu().tolist())
-#     return total_loss / len(loader.dataset), y_true, y_pred
 @torch.no_grad()
 def evaluate(model, loader, criterion, device):
     model.eval()
@@ -335,15 +262,9 @@ def evaluate(model, loader, criterion, device):
         loss = criterion(logits, y)
 
         probs = torch.softmax(logits, dim=1)
-        
-        # VECTORIZATION thay vì vòng lặp for
         default_preds = torch.argmax(probs, dim=1)
-        
-        # Tạo mask (mặt nạ) cho từng điều kiện
         hate_mask = (probs[:, 2] > 0.3) & (probs[:, 2] > probs[:, 1])
         offensive_mask = (probs[:, 1] > 0.3) & ~hate_mask
-        
-        # Áp dụng threshold logic song song
         preds = default_preds.clone()
         preds[offensive_mask] = 1
         preds[hate_mask] = 2
@@ -508,25 +429,16 @@ def main():
         text_column=args.text_column,
         feature_columns=feature_columns,
     )
-    # === BỔ SUNG KỸ THUẬT OVERSAMPLING CHO TẬP TRAIN ===
     debug("Thực hiện Oversampling (Nhân bản dữ liệu) để cân bằng nhãn...")
-    
-    # Tách dữ liệu theo nhãn
     clean_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 0]     # Nhãn 0 (Đa số)
     offensive_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 1] # Nhãn 1 (Thiểu số)
     hate_indices = [i for i, lbl in enumerate(train_labels_raw) if lbl == 2]      # Nhãn 2 (Thiểu số)
-    
-    # Tính số lần cần nhân bản để cân bằng tương đối (không cần bằng 100%, chỉ cần xấp xỉ 50-70%)
-    # Ví dụ: Nhân bản OFFENSIVE lên 5 lần, HATE lên 3 lần
     import random
     augmented_indices = clean_indices.copy()
     augmented_indices.extend(offensive_indices * 5) # Nhân 5 lần dữ liệu Offensive
     augmented_indices.extend(hate_indices * 3)      # Nhân 3 lần dữ liệu Hate
-    
-    # Xáo trộn lại tập dữ liệu
     random.shuffle(augmented_indices)
     
-    # Áp dụng lại vào mảng train
     train_texts = [train_texts[i] for i in augmented_indices]
     train_meta = np.array([train_meta[i] for i in augmented_indices])
     train_labels_raw = [train_labels_raw[i] for i in augmented_indices]
@@ -566,7 +478,6 @@ def main():
             fasttext_path = candidate_fasttext_path
 
     if os.path.exists(fasttext_path):
-        # fasttext_dict = load_fasttext_vectors(fasttext_path)
         fasttext_dict = load_fasttext_vectors(fasttext_path, vocab)
         pretrained_embeddings = build_embedding_matrix(vocab, fasttext_dict, embed_dim=args.embed_dim)
         fasttext_dim = len(next(iter(fasttext_dict.values())))
@@ -626,8 +537,6 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
-
-    # BỔ SUNG SCHEDULER: Giảm LR đi một nửa (factor=0.5) nếu dev_f1 không tăng sau 2 epoch
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', factor=0.5, patience=2
     )
