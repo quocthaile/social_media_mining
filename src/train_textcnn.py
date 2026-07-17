@@ -47,7 +47,7 @@ def load_split(csv_path: str, text_column: str, feature_columns):
     required_cols = {text_column, "label_id", *feature_columns}
     if not required_cols.issubset(df.columns):
         raise ValueError(f"{csv_path} must contain columns: {required_cols}")
-    texts = df[text_column].fillna("").astype(str).tolist()
+    texts = df[text_column].fillna("").astype(str).str.lower().tolist()
     meta_features = (
         df[feature_columns]
         .apply(pd.to_numeric, errors="coerce")
@@ -119,8 +119,6 @@ def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
     debug("Đang khởi tạo Ma trận Embedding cho mô hình...")
     if not embeddings_dict:
         raise ValueError("embeddings_dict is empty, cannot build embedding matrix")
-
-    # [Dành cho GRU] Đồng bộ số chiều nếu tham số truyền vào khác với vector thực tế
     fasttext_dim = len(next(iter(embeddings_dict.values())))
     if embed_dim is None:
         embed_dim = fasttext_dim
@@ -129,8 +127,6 @@ def build_embedding_matrix(vocab, embeddings_dict, embed_dim=None):
         embed_dim = fasttext_dim
 
     vocab_size = len(vocab)
-    
-    # 1. Khởi tạo bằng np.zeros thay vì np.random (Giải quyết triệt để PAD_TOKEN)
     embedding_matrix = np.zeros((vocab_size, embed_dim), dtype=np.float32)
     
     hits = 0
@@ -189,8 +185,6 @@ class TextCNN(nn.Module):
             self.embedding = nn.Embedding.from_pretrained(
                 pretrained_embeddings, freeze=False, padding_idx=padding_idx
             )
-        # else:
-            # self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
             
         self.convs = nn.ModuleList([nn.Conv1d(embed_dim, num_filters, k) for k in kernel_sizes])
         self.dropout = nn.Dropout(dropout)
@@ -239,30 +233,6 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
     return total_loss / len(loader.dataset)
 
-# @torch.no_grad()
-# def evaluate(model, loader, criterion, device):
-#     model.eval()
-#     total_loss = 0.0
-#     y_true, y_pred = [], []
-#     for batch_idx, (x, meta, y) in enumerate(loader, start=1):
-#         x, meta, y = x.to(device), meta.to(device), y.to(device)
-#         logits = model(x, meta)
-#         loss = criterion(logits, y)
-#         # THRESHOLD MOVING: Giữ nguyên chiến lược bắt tín hiệu độc hại
-#         probs = torch.softmax(logits, dim=1)
-#         preds = []
-#         for p in probs:
-#             if p[2] > 0.3 and p[2] > p[1]:        # Ngưỡng Thù địch
-#                 preds.append(2)
-#             elif p[1] > 0.3:                      # Ngưỡng Xúc phạm
-#                 preds.append(1)
-#             else:
-#                 preds.append(torch.argmax(p).item())            
-#         preds = torch.tensor(preds)
-#         total_loss += loss.item() * x.size(0)
-#         y_true.extend(y.cpu().tolist())
-#         y_pred.extend(preds.cpu().tolist())
-#     return total_loss / len(loader.dataset), y_true, y_pred
 @torch.no_grad()
 def evaluate(model, loader, criterion, device):
     model.eval()
@@ -275,14 +245,11 @@ def evaluate(model, loader, criterion, device):
 
         probs = torch.softmax(logits, dim=1)
         
-        # VECTORIZATION thay vì vòng lặp for
         default_preds = torch.argmax(probs, dim=1)
         
-        # Tạo mask (mặt nạ) cho từng điều kiện
         hate_mask = (probs[:, 2] > 0.3) & (probs[:, 2] > probs[:, 1])
         offensive_mask = (probs[:, 1] > 0.3) & ~hate_mask
         
-        # Áp dụng threshold logic song song
         preds = default_preds.clone()
         preds[offensive_mask] = 1
         preds[hate_mask] = 2

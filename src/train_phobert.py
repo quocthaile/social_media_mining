@@ -20,7 +20,7 @@ from transformers import (
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 
-DEFAULT_TEXT_COLUMN = "tokens_text"  # Mặc định PhoBERT dùng text CÓ gạch dưới
+DEFAULT_TEXT_COLUMN = "tokens_text"
 DEFAULT_FEATURE_COLUMNS = [
     "feat_log_num_tokens",        
     "feat_upper_ratio",           
@@ -114,7 +114,7 @@ class TransformerWithMetaFeatures(nn.Module):
         feature_hidden_size: int,
         text_dropout: float,
         feature_dropout: float,
-        class_weights=None, # THÊM THAM SỐ CLASS WEIGHTS
+        class_weights=None,
         id2label=None,
         label2id=None,
     ):
@@ -174,7 +174,6 @@ class TransformerWithMetaFeatures(nn.Module):
 
         loss = None
         if labels is not None:
-            # SỬ DỤNG TRỌNG SỐ ĐỘNG TỪ BỘ ĐỆM
             loss = F.cross_entropy(logits, labels, weight=self.class_weights)
             
         return SequenceClassifierOutput(loss=loss, logits=logits)
@@ -202,42 +201,6 @@ def train_one_epoch(model, loader, optimizer, scheduler, device):
 
     return total_loss / len(loader.dataset)
 
-# @torch.no_grad()
-# def evaluate(model, loader, device):
-#     model.eval()
-#     total_loss = 0.0
-#     y_true, y_pred = [], []
-#     debug(f"Evaluating with {len(loader)} batches")
-
-#     for batch_idx, batch in enumerate(loader, start=1):
-#         batch = {k: v.to(device) for k, v in batch.items()}
-#         outputs = model(**batch)
-
-#         loss = outputs.loss
-#         logits = outputs.logits
-        
-#         # --- BẬT LẠI THRESHOLD MOVING ---
-#         probs = torch.softmax(logits, dim=1)
-#         batch_preds = []
-#         for p in probs:
-#             if p[2] > 0.30:        # Mốc Thù địch: 30%
-#                 batch_preds.append(2)
-#             elif p[1] > 0.25:      # Mốc Xúc phạm: 25%
-#                 batch_preds.append(1)
-#             else:
-#                 batch_preds.append(torch.argmax(p).item())
-                
-#         preds = torch.tensor(batch_preds)
-#         # --------------------------------
-
-#         total_loss += loss.item() * batch["labels"].size(0)
-#         y_true.extend(batch["labels"].cpu().tolist())
-#         y_pred.extend(preds.cpu().tolist())
-        
-#         if batch_idx % 20 == 0 or batch_idx == len(loader):
-#             debug(f"Eval batch {batch_idx}/{len(loader)}")
-
-#     return total_loss / len(loader.dataset), y_true, y_pred
 @torch.no_grad()
 def evaluate(model, loader, device):
     model.eval()
@@ -251,7 +214,6 @@ def evaluate(model, loader, device):
         loss = outputs.loss
         logits = outputs.logits
         
-        # CHỈ DÙNG ARGMAX TINH KHIẾT (Vì Loss đã có Class Weights)
         preds = torch.argmax(logits, dim=1)
         
         total_loss += loss.item() * batch["labels"].size(0)
@@ -298,10 +260,6 @@ def print_confusion_and_scores(y_true, y_pred, id2label):
     f1_macro = f1_score(y_true, y_pred, average="macro")
     print(f"\nAccuracy: {acc:.4f}")
     print(f"F1-macro: {f1_macro:.4f}")
-    # print(f"\nAccuracy: {acc:.4f}")
-    # print(f"F1-macro: {f1_macro:.4f}")
-    
-    # THÊM DÒNG NÀY VÀO CUỐI HÀM
     return cm_df, pd.DataFrame(rows), acc, f1_macro
 
 def build_export_filename(model_prefix: str, filename: str) -> str:
@@ -428,19 +386,6 @@ def run_experiment(
     train_ds = TransformerDataset(train_texts, train_meta, train_labels, tokenizer, args.max_len)
     dev_ds = TransformerDataset(dev_texts, dev_meta, dev_labels, tokenizer, args.max_len)
     test_ds = TransformerDataset(test_texts, test_meta, test_labels, tokenizer, args.max_len)
-
-# Tính toán trọng số lấy mẫu cho từng dòng dữ liệu trong tập Train
-    # class_sample_counts = np.bincount(train_labels)
-    # class_weights_sampler = 1. / class_sample_counts
-    # sample_weights = np.array([class_weights_sampler[t] for t in train_labels])
-    # sample_weights = torch.from_numpy(sample_weights).double()
-    
-    # Tạo Sampler thay cho việc Shuffle mặc định
-    # sampler = WeightedRandomSampler(
-    #     weights=sample_weights,
-    #     num_samples=len(sample_weights),
-    #     replacement=True
-    # )
 
     train_loader = DataLoader(
         train_ds, 
