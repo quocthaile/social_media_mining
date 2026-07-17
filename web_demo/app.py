@@ -623,17 +623,26 @@ class ModelManager:
             
             try:
                 checkpoint = torch.load(pt_path, map_location=torch.device("cpu"))
+                
+                model_name_map = {
+                    "gru": "BiGRU",
+                    "textcnn": "TextCNN",
+                    "distil": "DistilBERT",
+                    "bert_cased": "mBERT",
+                    "xlmr": "XLM-R",
+                    "phobert": "PhoBERT",
+                    "bami": "BamiBERT"
+                }
+                display_name = model_name_map.get(name, name.upper())
+
                 if "model_name" in checkpoint:
                     mtype = "transformer"
-                    display_name = f"Transformer ({name.upper()})"
                 elif "vocab" in checkpoint:
                     args = checkpoint.get("args", {})
                     if "kernel_sizes" in args:
                         mtype = "textcnn"
-                        display_name = f"TextCNN ({name.upper()})"
                     else:
                         mtype = "gru"
-                        display_name = f"GRU ({name.upper()})"
                 else:
                     continue
 

@@ -42,6 +42,26 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // Model Selector & Stats Loading
+    const MODEL_NAME_MAPPING = {
+        'gru': 'BiGRU',
+        'textcnn': 'TextCNN',
+        'distil': 'DistilBERT',
+        'bert_cased': 'mBERT',
+        'xlmr': 'XLM-R',
+        'phobert': 'PhoBERT',
+        'bami': 'BamiBERT'
+    };
+
+    const PRETRAINED_MAPPING = {
+        'gru': 'FastText',
+        'textcnn': 'FastText',
+        'distil': 'distilbert-base-multilingual-cased',
+        'bert_cased': 'bert-base-multilingual-cased',
+        'xlmr': 'xlm-roberta-base',
+        'phobert': 'vinai/phobert-base',
+        'bami': 'bamibert-base'
+    };
+
     const modelBadge = document.getElementById("model-name-badge");
     const statsModel = document.getElementById("stats-model-name");
     const statsEpochs = document.getElementById("stats-epochs");
@@ -65,10 +85,25 @@ document.addEventListener("DOMContentLoaded", () => {
         return fetch("/api/stats")
             .then(res => res.json())
             .then(data => {
-                const shortName = data.model_name.split("/").pop();
-                modelBadge.textContent = `${shortName} (${data.model_type.toUpperCase()})`;
-                statsModel.textContent = data.model_name;
-                statsModel.title = data.model_name;
+                let modelDisplayName = data.model_name;
+                let pretrainedModelName = data.model_name;
+
+                for (const [k, v] of Object.entries(MODEL_NAME_MAPPING)) {
+                    if (selectedModelKey.includes(k)) {
+                        modelDisplayName = v;
+                        break;
+                    }
+                }
+                for (const [k, v] of Object.entries(PRETRAINED_MAPPING)) {
+                    if (selectedModelKey.includes(k)) {
+                        pretrainedModelName = v;
+                        break;
+                    }
+                }
+
+                modelBadge.textContent = modelDisplayName;
+                statsModel.textContent = pretrainedModelName;
+                statsModel.title = pretrainedModelName;
                 statsEpochs.textContent = data.epochs;
                 statsMaxLen.textContent = `${data.max_len} tokens`;
                 statsLr.textContent = data.lr;
@@ -360,9 +395,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 // In biểu đồ độ tin cậy
                 renderConfidenceChart(data.probs);
-
-                // Cập nhật Meta-features
-                renderMetaMetrics(data.meta_features);
             })
             .catch(err => {
                 console.error(err);
@@ -438,6 +470,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function renderMetaMetrics(meta) {
         const grid = document.getElementById("metrics-grid");
+        if (!grid) return;
         grid.innerHTML = "";
 
         // Danh sách các meta key muốn hiển thị trực quan
