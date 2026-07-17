@@ -5,7 +5,29 @@ import sys
 try:
     import tokenizers.models
     original_unigram = tokenizers.models.Unigram
-    tokenizers.models.Unigram = lambda *args, **kwargs: original_unigram(list(kwargs.pop('vocab').items()), *args, **kwargs) if 'vocab' in kwargs and isinstance(kwargs['vocab'], dict) else original_unigram(*args, **kwargs)
+    def robust_unigram(*args, **kwargs):
+        def clean_vocab(vocab_data):
+            if isinstance(vocab_data, dict):
+                return tuple((str(k), float(v)) for k, v in vocab_data.items())
+            elif isinstance(vocab_data, (list, tuple)):
+                cleaned = []
+                for item in vocab_data:
+                    if isinstance(item, (list, tuple)) and len(item) == 2:
+                        cleaned.append((str(item[0]), float(item[1])))
+                    else:
+                        cleaned.append(item)
+                return tuple(cleaned)
+            return vocab_data
+
+        new_args = list(args)
+        # 1. Xử lý vocab trong kwargs
+        if 'vocab' in kwargs:
+            kwargs['vocab'] = clean_vocab(kwargs['vocab'])
+        # 2. Xử lý vocab trong args (positional argument đầu tiên)
+        if len(new_args) > 0:
+            new_args[0] = clean_vocab(new_args[0])
+        return original_unigram(*tuple(new_args), **kwargs)
+    tokenizers.models.Unigram = robust_unigram
 except Exception:
     pass
 
@@ -544,67 +566,7 @@ def segment_and_remove_stopwords(text: str, remove_stopwords: bool = False) -> s
     return ' '.join(words)
 
 # FEATURE EXTRACTION FOR WEB_DEMO
-EMOJI_TAG_PATTERN = re.compile(r"\bEMOJI_[A-Z_]+\b")
-EMOJI_ALIAS_PATTERN = re.compile(r":\s*[a-z0-9_+\-]+\s*:", re.IGNORECASE)
-ELONGATED_PATTERN = re.compile(r'(.)\1{2,}')
-
-BAD_WORDS_LIST = [
-    "lồn", "đéo", "địt", "đkm", "vcl", "cặc", "ngu", "chó", "đĩ", 
-    "điếm", "đảng", "cộng sản", "phản động", "cc", "cđm", "vl", 
-    "đm", "dkm", "đĩ điếm", "đĩ thoã", "coin card", "éo", "nham lon",
-    "lủ chó", "nhảm lồn", "vãi lồn", "vãi cả lồn", "địt mẹ", "đụ", 
-    "đụ má", "con card", "concard", "củ cặc", "xạo lồn", "tinh trùng", 
-    "bê đê", "ml", "sml", "óc chó", "đực rựa", "đm", "cmm", "dcm"
-]
-BAD_WORDS_PATTERN = re.compile(r'\b(?:' + '|'.join(map(re.escape, BAD_WORDS_LIST)) + r')\b', re.IGNORECASE)
-
-def count_emoji_features(text: str) -> int:
-    return len(EMOJI_TAG_PATTERN.findall(text)) + len(EMOJI_ALIAS_PATTERN.findall(text))
-
-def count_punctuation(text: str) -> int:
-    return sum(1 for ch in text if unicodedata.category(ch).startswith("P"))
-
-def count_bad_words(text: str) -> int:
-    clean_text = text.replace('_', ' ').lower()
-    return len(BAD_WORDS_PATTERN.findall(clean_text))
-
-def count_elongated_words(text: str) -> int:
-    return len(ELONGATED_PATTERN.findall(text))
-
-def count_exclamation_question(text: str) -> int:
-    return sum(1 for ch in text if ch in ('!', '?'))
-
-def count_all_caps_words(text: str) -> int:
-    tokens = text.split()
-    return sum(1 for t in tokens if t.isupper() and len(t) > 1)
-
-def extract_feature_row(text: str) -> dict:
-    tokens = [tok for tok in text.split(" ") if tok]
-    num_tokens = len(tokens)
-    num_chars = len(text)
-    avg_token_len = float(np.mean([len(tok) for tok in tokens])) if num_tokens > 0 else 0.0
-    emoji_count = count_emoji_features(text)
-    punct_count = count_punctuation(text)
-    alpha_count = sum(1 for ch in text if ch.isalpha())
-    upper_count = sum(1 for ch in text if ch.isalpha() and ch.isupper())
-    digit_count = sum(1 for ch in text if ch.isdigit())
-    bad_word_count = count_bad_words(text)
-    elongated_count = count_elongated_words(text)
-    exclamation_count = count_exclamation_question(text)
-    allcaps_count = count_all_caps_words(text)
-    return {
-        "feat_log_num_tokens": float(np.log1p(num_tokens)),
-        "feat_log_num_chars": float(np.log1p(num_chars)),
-        "feat_avg_token_len": float(avg_token_len),
-        "feat_emoji_density": float(emoji_count / max(num_tokens, 1)),
-        "feat_punct_density": float(punct_count / max(num_chars, 1)),
-        "feat_upper_ratio": float(upper_count / max(alpha_count, 1)),
-        "feat_digit_ratio": float(digit_count / max(num_chars, 1)),
-        "feat_bad_word_density": float(bad_word_count / max(num_tokens, 1)),
-        "feat_elongated_ratio": float(elongated_count / max(num_tokens, 1)),
-        "feat_exclamation_density": float(exclamation_count / max(num_chars, 1)),
-        "feat_allcaps_ratio": float(allcaps_count / max(num_tokens, 1)),
-    }
+from src.build_feature_dataset import extract_feature_row, BAD_WORDS_LIST
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = os.path.join(os.path.dirname(__file__), "uploads")
@@ -622,7 +584,7 @@ else:
 # DYNAMIC MODEL MANAGER
 # -------------------------------------------------------------
 MODELS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models"))
-label_names = {0: "Clean (Sạch)", 1: "Offensive (Xúc phạm)", 2: "Hate Speech (Thù địch)"}
+label_names = {0: "Clean", 1: "Offensive", 2: "Hate"}
 
 class ModelManager:
     def __init__(self):
@@ -633,6 +595,7 @@ class ModelManager:
         self.checkpoint = None
         self.model_type = None  # 'transformer', 'gru', 'textcnn'
         self.id2label = {0: "0", 1: "1", 2: "2"}
+        self.model_cache = {}  # LRU Cache to avoid reloading models
 
     def scan_available_models(self):
         """Quét thư mục models để tìm các checkpoint đã được huấn luyện."""
@@ -645,36 +608,47 @@ class ModelManager:
             if not os.path.isdir(sub_dir):
                 continue
             
-            # Kiểm tra Transformer
-            transformer_path = os.path.join(sub_dir, "best_transformer_with_features.pt")
-            if os.path.exists(transformer_path):
-                available[f"transformer-{name}"] = {
-                    "name": f"Transformer ({name.upper()})",
-                    "path": transformer_path,
-                    "type": "transformer"
-                }
+            # Quét tìm tất cả các file .pt trong thư mục con này
+            try:
+                pt_files = [f for f in os.listdir(sub_dir) if f.endswith(".pt")]
+            except Exception:
+                continue
 
-            # Kiểm tra GRU
-            gru_path = os.path.join(sub_dir, "best_gru.pt")
-            if os.path.exists(gru_path):
-                available[f"gru-{name}"] = {
-                    "name": f"GRU ({name.upper()})",
-                    "path": gru_path,
-                    "type": "gru"
-                }
+            if not pt_files:
+                continue
+            
+            # Ưu tiên chọn file có chữ 'best', nếu không thì chọn file .pt đầu tiên
+            best_pt = next((f for f in pt_files if "best" in f.lower()), pt_files[0])
+            pt_path = os.path.join(sub_dir, best_pt)
+            
+            try:
+                checkpoint = torch.load(pt_path, map_location=torch.device("cpu"))
+                if "model_name" in checkpoint:
+                    mtype = "transformer"
+                    display_name = f"Transformer ({name.upper()})"
+                elif "vocab" in checkpoint:
+                    args = checkpoint.get("args", {})
+                    if "kernel_sizes" in args:
+                        mtype = "textcnn"
+                        display_name = f"TextCNN ({name.upper()})"
+                    else:
+                        mtype = "gru"
+                        display_name = f"GRU ({name.upper()})"
+                else:
+                    continue
 
-            # Kiểm tra TextCNN
-            textcnn_path = os.path.join(sub_dir, "best_textcnn.pt")
-            if os.path.exists(textcnn_path):
-                available[f"textcnn-{name}"] = {
-                    "name": f"TextCNN ({name.upper()})",
-                    "path": textcnn_path,
-                    "type": "textcnn"
+                available[f"{mtype}-{name}"] = {
+                    "name": display_name,
+                    "path": pt_path,
+                    "type": mtype
                 }
+            except Exception as e:
+                print(f"[WARNING] Không thể đọc checkpoint {pt_path}: {e}")
+                continue
         return available
 
     def load_model(self, model_key):
-        """Tải mô hình đã chọn vào RAM/GPU."""
+        """Tải mô hình đã chọn vào RAM/GPU (có cơ chế LRU Cache để tối ưu thời gian chuyển đổi)."""
         available = self.scan_available_models()
         if model_key not in available:
             raise ValueError(f"Model key '{model_key}' không khả dụng.")
@@ -685,10 +659,31 @@ class ModelManager:
         self.checkpoint_path = path
         mtype = meta["type"]
 
+        # Kiểm tra cache trước
+        if model_key in self.model_cache:
+            print(f"[INFO] Nạp mô hình {meta['name']} từ Cache bộ nhớ...")
+            cached = self.model_cache[model_key]
+            self.model = cached["model"]
+            self.tokenizer = cached["tokenizer"]
+            self.vocab = cached["vocab"]
+            self.checkpoint = cached["checkpoint"]
+            self.model_type = cached["model_type"]
+            self.id2label = cached["id2label"]
+            self.checkpoint_path = cached["checkpoint_path"]
+            self.active_model_key = model_key
+            print(f"[INFO] Nạp mô hình {meta['name']} từ Cache thành công!")
+            return
+
         print(f"[INFO] Đang tải mô hình {meta['name']} từ {path}...")
         checkpoint = torch.load(path, map_location=torch.device("cpu"))
 
-        # Giải phóng mô hình cũ khỏi bộ nhớ
+        # Quản lý bộ nhớ Cache (giới hạn tối đa 2 mô hình trong RAM/GPU)
+        if len(self.model_cache) >= 2:
+            oldest_key = next(iter(self.model_cache))
+            print(f"[INFO] Giải phóng mô hình {oldest_key} từ Cache để tiết kiệm bộ nhớ...")
+            del self.model_cache[oldest_key]
+            
+        # Giải phóng mô hình đang chạy cũ khỏi bộ nhớ nếu không được cache
         self.model = None
         self.tokenizer = None
         self.vocab = None
@@ -701,6 +696,9 @@ class ModelManager:
                 torch.mps.empty_cache()
             except Exception:
                 pass
+
+        tokenizer = None
+        vocab = None
 
         if mtype == "transformer":
             # Khởi tạo Transformer
@@ -787,6 +785,17 @@ class ModelManager:
         self.checkpoint = checkpoint
         self.active_model_key = model_key
         self.id2label = {int(k): str(v) for k, v in checkpoint["id2label"].items()}
+        
+        # Lưu vào Cache
+        self.model_cache[model_key] = {
+            "model": self.model,
+            "tokenizer": self.tokenizer,
+            "vocab": self.vocab,
+            "checkpoint": self.checkpoint,
+            "model_type": self.model_type,
+            "id2label": self.id2label,
+            "checkpoint_path": self.checkpoint_path
+        }
         print(f"[INFO] Nạp mô hình {meta['name']} thành công lên: {device}")
 
     def predict(self, text):

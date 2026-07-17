@@ -5,18 +5,18 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!toastContainer) return;
         const toast = document.createElement("div");
         toast.className = `toast toast-${type}`;
-        
+
         let iconClass = "fa-circle-info";
         if (type === "success") iconClass = "fa-circle-check";
         if (type === "error") iconClass = "fa-circle-xmark";
-        
+
         toast.innerHTML = `
             <i class="fa-solid ${iconClass} toast-icon"></i>
             <span class="toast-message">${message}</span>
         `;
-        
+
         toastContainer.appendChild(toast);
-        
+
         // Auto remove after 4s
         setTimeout(() => {
             toast.classList.add("hide");
@@ -47,13 +47,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const statsEpochs = document.getElementById("stats-epochs");
     const statsMaxLen = document.getElementById("stats-max-len");
     const statsLr = document.getElementById("stats-lr");
-    
+
     const modelDropdown = document.getElementById("model-dropdown");
     const dropdownTrigger = document.getElementById("dropdown-trigger");
     const dropdownSelectedText = document.getElementById("dropdown-selected-text");
     const dropdownOptionsList = document.getElementById("dropdown-options-list");
 
     const statsOverlay = document.getElementById("stats-loading-overlay");
+
+    const globalOverlay = document.getElementById("global-loading-overlay");
+    const loadingTitle = document.getElementById("loading-model-title");
 
     function loadModelStats() {
         if (statsOverlay) {
@@ -72,7 +75,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 // Cập nhật chỉ số đánh giá động
                 if (data.metrics) {
-                    // Hỗ trợ cả cấu trúc lồng nhau (accuracy_optimized/f1_optimized) lẫn cấu trúc phẳng
                     let metricsObj = data.metrics;
                     if (data.metrics.accuracy_optimized) {
                         metricsObj = data.metrics.accuracy_optimized;
@@ -84,15 +86,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     document.getElementById("stats-accuracy").textContent = `${(accValue * 100).toFixed(2)}%`;
                     document.getElementById("stats-f1").textContent = `${(f1Value * 100).toFixed(2)}%`;
-                    
+
                     if (cm && cm.length === 3) {
+                        // Tính toán các chỉ số One-vs-Rest (OvR)
+                        // Lấy tổng tất cả phần tử trong ma trận
+                        const totalSamples = cm[0].reduce((a,b)=>a+b, 0) + cm[1].reduce((a,b)=>a+b, 0) + cm[2].reduce((a,b)=>a+b, 0);
+
                         for (let r = 0; r < 3; r++) {
                             const rowTotal = cm[r].reduce((sum, val) => sum + val, 0) || 1;
                             for (let c = 0; c < 3; c++) {
                                 const cell = document.getElementById(`cm-${r}-${c}`);
                                 cell.textContent = cm[r][c];
                                 cell.classList.add("heatmap-cell");
-                                
+
                                 const ratio = cm[r][c] / rowTotal;
                                 if (r === c) {
                                     // Correct predictions (diagonal) -> Turquoise glow
@@ -102,6 +108,21 @@ document.addEventListener("DOMContentLoaded", () => {
                                     cell.style.backgroundColor = `rgba(244, 63, 94, ${Math.max(0, ratio * 0.45)})`;
                                 }
                             }
+
+                            // Tính chỉ số OvR cho class r
+                            // TP: Dự đoán là r và thực tế là r (chính là cm[r][r])
+                            const tp = cm[r][r];
+                            // FP: Dự đoán là r nhưng thực tế là khác r (tổng cột r trừ cm[r][r])
+                            const fp = cm[0][r] + cm[1][r] + cm[2][r] - cm[r][r];
+                            // FN: Thực tế là r nhưng dự đoán là khác r (tổng hàng r trừ cm[r][r])
+                            const fn = cm[r][0] + cm[r][1] + cm[r][2] - cm[r][r];
+                            // TN: Thực tế không phải r và dự đoán không phải r (tổng tất cả trừ TP, FP, FN)
+                            const tn = totalSamples - (tp + fp + fn);
+
+                            document.getElementById(`ovr-${r}-tn`).textContent = tn;
+                            document.getElementById(`ovr-${r}-tp`).textContent = tp;
+                            document.getElementById(`ovr-${r}-fn`).textContent = fn;
+                            document.getElementById(`ovr-${r}-fp`).textContent = fp;
                         }
                     }
                 } else {
@@ -113,6 +134,10 @@ document.addEventListener("DOMContentLoaded", () => {
                             cell.textContent = "-";
                             cell.style.backgroundColor = "";
                         }
+                        document.getElementById(`ovr-${r}-tn`).textContent = "-";
+                        document.getElementById(`ovr-${r}-tp`).textContent = "-";
+                        document.getElementById(`ovr-${r}-fn`).textContent = "-";
+                        document.getElementById(`ovr-${r}-fp`).textContent = "-";
                     }
                 }
             })
@@ -144,7 +169,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     div.className = "dropdown-option";
                     div.dataset.value = m.key;
                     div.textContent = m.name;
-                    
+
                     if (m.key === data.active_model) {
                         div.classList.add("selected");
                         dropdownSelectedText.textContent = m.name;
@@ -177,45 +202,55 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function selectModel(modelKey, modelName) {
         if (modelKey === selectedModelKey) return;
-        
+
         modelDropdown.classList.add("disabled");
         modelDropdown.classList.remove("open");
         modelBadge.textContent = "Đang chuyển model...";
         dropdownSelectedText.textContent = "Đang tải mô hình...";
+
+        if (globalOverlay) {
+            loadingTitle.textContent = `Đang tải mô hình ${modelName} vào bộ nhớ...`;
+            globalOverlay.classList.remove("hidden");
+        }
 
         fetch("/api/select_model", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model_key: modelKey })
         })
-        .then(res => res.json())
-        .then(data => {
-            if (data.error) {
-                showToast(data.error, "error");
-                return;
-            }
-            selectedModelKey = modelKey;
-            
-            // Cập nhật selected option trong list UI
-            document.querySelectorAll(".dropdown-option").forEach(opt => {
-                if (opt.dataset.value === modelKey) {
-                    opt.classList.add("selected");
-                    dropdownSelectedText.textContent = opt.textContent;
-                } else {
-                    opt.classList.remove("selected");
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    showToast(data.error, "error");
+                    return;
+                }
+                selectedModelKey = modelKey;
+
+                // Cập nhật selected option trong list UI
+                document.querySelectorAll(".dropdown-option").forEach(opt => {
+                    if (opt.dataset.value === modelKey) {
+                        opt.classList.add("selected");
+                        dropdownSelectedText.textContent = opt.textContent;
+                    } else {
+                        opt.classList.remove("selected");
+                    }
+                });
+
+                loadModelStats().finally(() => {
+                    modelDropdown.classList.remove("disabled");
+                });
+            })
+            .catch(err => {
+                console.error(err);
+                showToast("Lỗi kết nối khi chuyển mô hình!", "error");
+                modelDropdown.classList.remove("disabled");
+                loadModelStats();
+            })
+            .finally(() => {
+                if (globalOverlay) {
+                    globalOverlay.classList.add("hidden");
                 }
             });
-
-            loadModelStats().finally(() => {
-                modelDropdown.classList.remove("disabled");
-            });
-        })
-        .catch(err => {
-            console.error(err);
-            showToast("Lỗi kết nối khi chuyển mô hình!", "error");
-            modelDropdown.classList.remove("disabled");
-            loadModelStats();
-        });
     }
 
     // Khởi tạo
@@ -272,72 +307,72 @@ document.addEventListener("DOMContentLoaded", () => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text })
         })
-        .then(res => res.json())
-        .then(data => {
-            if (data.error) {
-                showToast(data.error, "error");
-                return;
-            }
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    showToast(data.error, "error");
+                    return;
+                }
 
-            // Hiện panel kết quả
-            resultPanel.classList.remove("empty");
-            resultPanel.querySelector(".empty-state").classList.add("hidden");
-            resultPanel.querySelector(".result-content").classList.remove("hidden");
+                // Hiện panel kết quả
+                resultPanel.classList.remove("empty");
+                resultPanel.querySelector(".empty-state").classList.add("hidden");
+                resultPanel.querySelector(".result-content").classList.remove("hidden");
 
-            // Cập nhật banner phán quyết
-            const banner = document.getElementById("verdict-banner");
-            const val = document.getElementById("verdict-value");
-            const icon = document.getElementById("verdict-icon");
+                // Cập nhật banner phán quyết
+                const banner = document.getElementById("verdict-banner");
+                const val = document.getElementById("verdict-value");
+                const icon = document.getElementById("verdict-icon");
 
-            banner.className = "verdict-banner";
-            if (data.label_id === 0) {
-                banner.classList.add("verdict-clean");
-                val.textContent = "SẠCH (CLEAN)";
-                icon.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
-            } else if (data.label_id === 1) {
-                banner.classList.add("verdict-offensive");
-                val.textContent = "XÚC PHẠM (OFFENSIVE)";
-                icon.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
-            } else {
-                banner.classList.add("verdict-hate");
-                val.textContent = "THÙ ĐỊCH (HATE SPEECH)";
-                icon.innerHTML = '<i class="fa-solid fa-hand-holding-hand"></i>';
-            }
+                banner.className = "verdict-banner";
+                if (data.label_id === 0) {
+                    banner.classList.add("verdict-clean");
+                    val.textContent = "SẠCH (CLEAN)";
+                    icon.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
+                } else if (data.label_id === 1) {
+                    banner.classList.add("verdict-offensive");
+                    val.textContent = "XÚC PHẠM (OFFENSIVE)";
+                    icon.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
+                } else {
+                    banner.classList.add("verdict-hate");
+                    val.textContent = "THÙ ĐỊCH (HATE SPEECH)";
+                    icon.innerHTML = '<i class="fa-solid fa-hand-holding-hand"></i>';
+                }
 
-            // Đánh dấu từ độc hại
-            document.getElementById("highlighted-text-p").innerHTML = data.highlighted_text;
+                // Đánh dấu từ độc hại
+                document.getElementById("highlighted-text-p").innerHTML = data.highlighted_text;
 
-            // Render detected bad words tags
-            const detectedWrapper = document.getElementById("detected-words-wrapper");
-            const detectedTags = document.getElementById("detected-tags");
-            detectedTags.innerHTML = "";
-            if (data.detected_bad_words && data.detected_bad_words.length > 0) {
-                detectedWrapper.classList.remove("hidden");
-                data.detected_bad_words.forEach(word => {
-                    const span = document.createElement("span");
-                    span.className = "detected-tag";
-                    span.textContent = word;
-                    detectedTags.appendChild(span);
-                });
-            } else {
-                detectedWrapper.classList.add("hidden");
-            }
+                // Render detected bad words tags
+                const detectedWrapper = document.getElementById("detected-words-wrapper");
+                const detectedTags = document.getElementById("detected-tags");
+                detectedTags.innerHTML = "";
+                if (data.detected_bad_words && data.detected_bad_words.length > 0) {
+                    detectedWrapper.classList.remove("hidden");
+                    data.detected_bad_words.forEach(word => {
+                        const span = document.createElement("span");
+                        span.className = "detected-tag";
+                        span.textContent = word;
+                        detectedTags.appendChild(span);
+                    });
+                } else {
+                    detectedWrapper.classList.add("hidden");
+                }
 
-            // In biểu đồ độ tin cậy
-            renderConfidenceChart(data.probs);
+                // In biểu đồ độ tin cậy
+                renderConfidenceChart(data.probs);
 
-            // Cập nhật Meta-features
-            renderMetaMetrics(data.meta_features);
-        })
-        .catch(err => {
-            console.error(err);
-            showToast("Đã xảy ra lỗi khi phân tích bình luận!", "error");
-        })
-        .finally(() => {
-            btnAnalyze.disabled = false;
-            btnText.textContent = "Phân tích";
-            btnSpinner.classList.add("hidden");
-        });
+                // Cập nhật Meta-features
+                renderMetaMetrics(data.meta_features);
+            })
+            .catch(err => {
+                console.error(err);
+                showToast("Đã xảy ra lỗi khi phân tích bình luận!", "error");
+            })
+            .finally(() => {
+                btnAnalyze.disabled = false;
+                btnText.textContent = "Phân tích";
+                btnSpinner.classList.add("hidden");
+            });
     });
 
     btnClear.addEventListener("click", () => {
@@ -495,49 +530,49 @@ document.addEventListener("DOMContentLoaded", () => {
             method: "POST",
             body: formData
         })
-        .then(res => res.json())
-        .then(data => {
-            if (data.error) {
-                showToast(data.error, "error");
-                return;
-            }
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    showToast(data.error, "error");
+                    return;
+                }
 
-            // Hiện panel kết quả batch
-            batchResultPanel.classList.remove("empty");
-            batchResultPanel.querySelector(".empty-state").classList.add("hidden");
-            batchResultPanel.querySelector(".result-content").classList.remove("hidden");
+                // Hiện panel kết quả batch
+                batchResultPanel.classList.remove("empty");
+                batchResultPanel.querySelector(".empty-state").classList.add("hidden");
+                batchResultPanel.querySelector(".result-content").classList.remove("hidden");
 
-            // Thiết lập link tải xuống
-            downloadLink.href = data.download_url;
+                // Thiết lập link tải xuống
+                downloadLink.href = data.download_url;
 
-            // Cập nhật các thẻ số liệu thống kê
-            const total = data.results.length;
-            let clean = 0, offensive = 0, hate = 0;
-            data.results.forEach(r => {
-                if (r.label_id === 0) clean++;
-                else if (r.label_id === 1) offensive++;
-                else if (r.label_id === 2) hate++;
+                // Cập nhật các thẻ số liệu thống kê
+                const total = data.results.length;
+                let clean = 0, offensive = 0, hate = 0;
+                data.results.forEach(r => {
+                    if (r.label_id === 0) clean++;
+                    else if (r.label_id === 1) offensive++;
+                    else if (r.label_id === 2) hate++;
+                });
+
+                document.getElementById("batch-total").textContent = total;
+                document.getElementById("batch-clean").textContent = `${clean} (${(clean / total * 100).toFixed(1)}%)`;
+                document.getElementById("batch-offensive").textContent = `${offensive} (${(offensive / total * 100).toFixed(1)}%)`;
+                document.getElementById("batch-hate").textContent = `${hate} (${(hate / total * 100).toFixed(1)}%)`;
+
+                // Render biểu đồ phân phối tròn (Donut chart)
+                renderBatchDonutChart(data.results);
+
+                // Hiện bản xem trước 10 dòng đầu
+                renderPreviewTable(data.results.slice(0, 10));
+            })
+            .catch(err => {
+                console.error(err);
+                showToast("Lỗi khi gửi tệp đi phân tích!", "error");
+            })
+            .finally(() => {
+                btnBatchProcess.disabled = false;
+                btnBatchProcess.textContent = "Bắt đầu xử lý";
             });
-            
-            document.getElementById("batch-total").textContent = total;
-            document.getElementById("batch-clean").textContent = `${clean} (${(clean / total * 100).toFixed(1)}%)`;
-            document.getElementById("batch-offensive").textContent = `${offensive} (${(offensive / total * 100).toFixed(1)}%)`;
-            document.getElementById("batch-hate").textContent = `${hate} (${(hate / total * 100).toFixed(1)}%)`;
-
-            // Render biểu đồ phân phối tròn (Donut chart)
-            renderBatchDonutChart(data.results);
-
-            // Hiện bản xem trước 10 dòng đầu
-            renderPreviewTable(data.results.slice(0, 10));
-        })
-        .catch(err => {
-            console.error(err);
-            showToast("Lỗi khi gửi tệp đi phân tích!", "error");
-        })
-        .finally(() => {
-            btnBatchProcess.disabled = false;
-            btnBatchProcess.textContent = "Bắt đầu xử lý";
-        });
     });
 
     function renderBatchDonutChart(results) {

@@ -189,8 +189,8 @@ class TextCNN(nn.Module):
             self.embedding = nn.Embedding.from_pretrained(
                 pretrained_embeddings, freeze=False, padding_idx=padding_idx
             )
-        # else:
-            # self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+        else:
+            self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
             
         self.convs = nn.ModuleList([nn.Conv1d(embed_dim, num_filters, k) for k in kernel_sizes])
         self.dropout = nn.Dropout(dropout)

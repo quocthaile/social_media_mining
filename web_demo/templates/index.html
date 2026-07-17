@@ -81,13 +81,13 @@
                                         nhanh:</span>
                                     <span class="example-tag tag-clean"
                                         data-text="Chúc bạn một ngày mới tràn đầy năng lượng và làm việc hiệu quả!">😊
-                                        Sạch</span>
+                                        CLEAN</span>
                                     <span class="example-tag tag-offensive"
-                                        data-text="Cái thằng dở hơi này, nói thế mà cũng nghe được à?">⚠️ Xúc
-                                        phạm</span>
+                                        data-text="đéo thích thì thôi cút mẹ đi =))">⚠️
+                                        OFFENSIVE</span>
                                     <span class="example-tag tag-hate"
-                                        data-text="Ghét bọn này thực sự, loại người này nên biến mất khỏi xã hội.">🚫
-                                        Thù địch</span>
+                                        data-text="Con bóng đực kia cũng là dạng đầu trâu mặt ngựa, 2 mặt, nịnh bợ.">🚫
+                                        HATE</span>
                                 </div>
                                 <div class="char-counter"><span id="char-count">0</span>/500</div>
                             </div>
@@ -187,11 +187,11 @@
                                         <span class="stat-value" id="batch-clean">-</span>
                                     </div>
                                     <div class="batch-stat-card stat-offensive">
-                                        <span class="stat-label">Xúc phạm</span>
+                                        <span class="stat-label">OFFENSIVE</span>
                                         <span class="stat-value" id="batch-offensive">-</span>
                                     </div>
                                     <div class="batch-stat-card stat-hate">
-                                        <span class="stat-label">Thù địch</span>
+                                        <span class="stat-label">HATE</span>
                                         <span class="stat-value" id="batch-hate">-</span>
                                     </div>
                                 </div>
@@ -312,6 +312,45 @@
                                 </table>
                             </div>
                         </div>
+
+                        <!-- Bổ sung bảng One-vs-Rest (OvR) giống như trong kết quả train -->
+                        <div class="metric-section ovr-section" style="margin-top: 30px;">
+                            <h4 class="sub-title">Bảng chỉ số chi tiết One-vs-Rest (OvR)</h4>
+                            <table class="academic-table ovr-table">
+                                <thead>
+                                    <tr>
+                                        <th>Class (Nhãn)</th>
+                                        <th>True Negative (TN)</th>
+                                        <th>True Positive (TP)</th>
+                                        <th>False Negative (FN)</th>
+                                        <th>False Positive (FP)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr id="ovr-row-0">
+                                        <td><strong>0 (CLEAN)</strong></td>
+                                        <td id="ovr-0-tn">-</td>
+                                        <td id="ovr-0-tp">-</td>
+                                        <td id="ovr-0-fn">-</td>
+                                        <td id="ovr-0-fp">-</td>
+                                    </tr>
+                                    <tr id="ovr-row-1">
+                                        <td><strong>1 (OFFENSIVE)</strong></td>
+                                        <td id="ovr-1-tn">-</td>
+                                        <td id="ovr-1-tp">-</td>
+                                        <td id="ovr-1-fn">-</td>
+                                        <td id="ovr-1-fp">-</td>
+                                    </tr>
+                                    <tr id="ovr-row-2">
+                                        <td><strong>2 (HATE)</strong></td>
+                                        <td id="ovr-2-tn">-</td>
+                                        <td id="ovr-2-tp">-</td>
+                                        <td id="ovr-2-fn">-</td>
+                                        <td id="ovr-2-fp">-</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -321,6 +360,15 @@
         <footer class="app-footer">
             <p>Đột phá xử lý tiếng Việt lệch nhãn trên mạng xã hội.</p>
         </footer>
+    </div>
+
+    <!-- Màn hình chờ chuyển đổi mô hình (Loading Model Overlay) -->
+    <div id="global-loading-overlay" class="global-loading-overlay hidden">
+        <div class="loading-container">
+            <div class="spinner-large"></div>
+            <h3 id="loading-model-title">Đang nạp mô hình vào bộ nhớ...</h3>
+            <p>Hệ thống có thể mất từ 1-5 giây đối với các mô hình lớn (PhoBERT, XLM-R).</p>
+        </div>
     </div>
 
     <!-- Toast Notifications Container -->
